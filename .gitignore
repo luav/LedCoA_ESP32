@@ -1,3 +1,7 @@
+# Custom Exclusions
+/.pio/
+/.vscode/
+
 # Prerequisites
 *.d
 

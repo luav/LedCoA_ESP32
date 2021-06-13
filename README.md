@@ -1,6 +1,14 @@
 # LedCoA_ESP32 - LED Strips Control Automation via 2x ESP32 D1Mini WeMos DevBoards
 This application controls up to 4 LED strips from 2 synchronized ESP32 D1Mini WeMos DevBoards using 2 DACs on each board. In addition, it senses photodiodes corresponding to each of the LED strips and synchronizes LED strips blinking with the [Euresys Coaxlink Grabber (Coaxlink Quad G3, KQG13496)](https://www.euresys.com/en/Products/Frame-Grabbers/Coaxlink-series/Coaxlink-Quad-G3) that captures frames from the cameras, whose lighting is provisioned by the LED strips.
 
+**Table of Contents**
+- [Hardware documentation and drivers:](#hardware-documentation-and-drivers)
+- [Build](#build)
+- [Usage](#usage)
+  - [Minicom for UART Reading](#minicom-for-uart-reading)
+- [ESP32 Port Mapping](#esp32-port-mapping)
+  - [#1 D1 Mini ESP32 WeMos](#1-d1-mini-esp32-wemos)
+  - [#2 D1 Mini ESP32 WeMos](#2-d1-mini-esp32-wemos)
 ## Hardware documentation and drivers:
 - [ESP32 tutorials](https://dronebotworkshop.com/esp32-2/)
 - [Euresys Coaxlink Grabber (Coaxlink Quad G3) documentation and drivers](https://www.euresys.com/en/Support/Download-area?Series=105d06c5-6ad9-42ff-b7ce-622585ce607f)
@@ -13,7 +21,41 @@ Use the [PlatformIO IDE](https://platformio.org/install/ide) extension of the [V
 
 ## Usage
 
-ESP32 Boards are controllable by the master board, which is connected to the server PC (that features the )
+ESP32 Boards are controllable via the UART (Serial port) from the host PC, which typically features the Euresys Coaxlink Camera Grabber.  
+After flashing an ESP32 board, connect their ports as specified in the sections [ESP32 Port Mapping](#esp32-port-mapping), then use minicom (see its [configuration below](#minicom-for-uart-reading)) or other application to read from the UART output from the master board.
+
+Connect to the master board (you can list available USB devices by `$ ls /dev/ttyUSB*`; we assume that the master board on `ttyUSB0`):
+```sh
+$ minicom -D /dev/ttyUSB0
+Input the lighting intensity (<ledstrip_id: uint2_t> <intensity: uint8_t>
+```
+Open another terminal to send control signals to the master board:
+```
+echo -ne "\x5\xAA" > /dev/ttyUSB0
+```
+Then you should see in the first terminal via the minicom:
+```
+Transferring to wire (idMask2, intensity): 0X4 0XAA
+LED strips id (mask): 0X1
+Set intensity: 0XAA
+```
+To exit from the minicom (which is mandatory before the reflashing), press `Ctrl+A X` and select `Yes`.
+
+### Minicom for UART Reading
+Minicom can be installed by the following command:
+```sh
+$ sudo apt install minicom
+```
+Then, select the target USB port and listen to it using minicom:
+```sh
+$ minicom -D /dev/ttyUSB0
+```
+Configure the opened connection and save it as a default configuration: press `Ctrl+A O`, select `Serial port setup` and ensure the following values:
+```
+	E - "115200 8N1"
+	F - No
+```
+
 ## ESP32 Port Mapping
 
 \#1 D1 Mini is powered by USB (and, hence, can be externally controlled and re-flashed at any time).

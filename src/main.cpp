@@ -1,15 +1,11 @@
 #include <Arduino.h>
 // #include <stdio.h>  // printf (inlcuding the output to serial port)
-// #include <Wire.h>  // I2C
+#include <Wire.h>  // I2C
 
-// #define LED_BUILTIN to PA8
-//! Analog reading pins for ADC0,1
-// enum ARD_PINS {
-//   ARD00 = PA0,
-//   ARD01 = PA1,
-//   ARD10 = PA6,  // PB0;  NOTE: PA4 is used by DAC0
-//   ARD11 = PA7,  // NOTE: PA5 is used by DAC1
-// };
+// // ATTENTION: Should be commented when compiling the slave
+// #define BOARD_MASTER
+constexpr bool  dbgBlinking = true;  // Blink with the builtin LED for the debugging perposes
+bool prompted = false;  // Whether the user input is prompted
 
 //! Digital input pins from cameras
 enum CAM_PINS {
@@ -32,10 +28,109 @@ enum PSD_PINS {
 };
 
 uint16_t  dbgLedCycle = 1000;  // In ms for blinking
-uint16_t  dbgLedGrain = 10;  // In ms for blinking
+uint16_t  dbgLedGrain = 4;  // In ms for blinking; 25 fps = 4 ms
 
+//! @brief Report LED Strips State Change to UART (Serial Port) and via the builtin LED
+//! 
+//! @param ledStripIdMask 
+//! @param intensity 
+void reportLedState(uint8_t ledStripIdMask, uint8_t intensity, bool wire)
+{
+  // Report ledStripIdMask
+  if(Serial.availableForWrite()) {
+    if(wire)
+      Serial.print("Wire; ");
+    Serial.printf("LED strips id (mask): %#X\r\n", ledStripIdMask);
+  }
+  // Blink the number of times equal to the selected LED ID
+  if(dbgBlinking) {
+    for(uint16_t i = 0; i < ledStripIdMask; ++i) {
+      digitalWrite(LED_BUILTIN, LOW);
+      delay(dbgLedGrain * 2);  // Wait 20 ms
+      digitalWrite(LED_BUILTIN, HIGH);
+    }
+  }
 
-void setup() {
+  // Report intensity
+  if(Serial.availableForWrite()) {
+    if(wire)
+      Serial.print("Wire; ");
+    Serial.printf("Set intensity: %#X\r\n", intensity);
+  }
+  // Use internal LED to visualize the target intensify
+  if(dbgBlinking) {
+    digitalWrite(LED_BUILTIN, LOW);
+    uint16_t  dbgLedIters = dbgLedCycle / dbgLedGrain;
+    const uint8_t  dbgLedDimCycle = 10;
+    uint8_t intensHighDim = intensity / 255.f * dbgLedDimCycle;
+    for(uint16_t i = 0; i < dbgLedIters; ++i) {
+      if ((i%dbgLedDimCycle + 1) * intensHighDim >= dbgLedDimCycle)
+        digitalWrite(LED_BUILTIN, HIGH);
+      else digitalWrite(LED_BUILTIN, LOW);
+      delay(dbgLedGrain);
+    }
+  }
+}
+
+//! @brief Syncronization receiver callback
+//! 
+//! @param nbytes  - the number of bytes to be received
+void getSyncData(int nbytes)
+{
+  assert(nbytes == 2 && "2 bytes are expected: ledStripId, intensity");
+  const uint8_t ledStripIdMask = Wire.read();
+  const uint8_t intensity = Wire.read();
+
+  if(!(0b1100 & ledStripIdMask)) {
+    if(Serial.availableForWrite())
+      Serial.printf("WARNING: The led id mask is not controllable by the slave board: %#X\n", ledStripIdMask);
+    return;
+  }
+
+  // Adjust LED strips lighting intensity
+  if(0b0100 & ledStripIdMask)
+    dacWrite(DAC1, intensity);  // 255= 3.3V 128=1.65V
+  if(0b1000 & ledStripIdMask)
+    dacWrite(DAC2, intensity);  // 255= 3.3V 128=1.65V
+
+  reportLedState(ledStripIdMask, intensity, true);
+  prompted = false;
+}
+
+// ATTENTION: this Arduino callback is not defined in ESP32, so it is called manually
+void serialEvent() {
+  assert(Serial.available() == 2 && "2 bytes are expected: ledStripId, intensity");
+  uint8_t  ledStripIdMask = 0;  // 255
+  // while(!Serial.available())
+  //   delay(100);  // Wait 100 ms
+  Serial.read(&ledStripIdMask, sizeof ledStripIdMask);
+  uint8_t intensity = -1;  // 255
+  Serial.read(&intensity, sizeof intensity);
+
+  // Adjust LED strips lighting intensity
+  if(0b0001 & ledStripIdMask)
+    dacWrite(DAC1, intensity);  // 255= 3.3V 128=1.65V
+  if(0b0010 & ledStripIdMask)
+    dacWrite(DAC2, intensity);  // 255= 3.3V 128=1.65V
+
+  const uint8_t  idMaskCut = 0b1100 & ledStripIdMask;
+  if(idMaskCut) {
+    // Transfer signal to the DAC1 in the Slave Board
+    Wire.beginTransmission(0); // transmit to device #0
+    Wire.write(idMaskCut);        // sends five bytes
+    Wire.write(intensity);              // sends one byte  
+    Wire.endTransmission();    // stop transmitting
+    Serial.printf("Transferring to wire (idMask2, intensity): %#X %#X\r\n", idMaskCut, intensity);
+  }
+
+  const uint8_t  idMaskLoc = 0b11 & ledStripIdMask;
+  if(idMaskLoc)
+  reportLedState(idMaskLoc, intensity, false);
+  prompted = false;
+}
+
+void setup()
+{
   // Setup internal LED for debuging perposese
   pinMode(LED_BUILTIN, OUTPUT);
 
@@ -63,6 +158,10 @@ void setup() {
   // Serial monitor setup
   Serial.begin(115200);
 
+  // I2C Setup
+  Wire.begin(); // join i2c bus (address optional for master)
+  //Wire.onReceive(getSyncData); // Register Wire receive event; NOTE: that is not implemented for ESP32
+
   // Perform lighting strips activation
   delay(20); // Wait 20 msec
   // Set max brightness for the LED strips
@@ -72,66 +171,89 @@ void setup() {
   digitalWrite(LED1, HIGH);
   digitalWrite(LED2, HIGH);
   // Activate builtin LED
-  digitalWrite(LED_BUILTIN, HIGH);
+  if(dbgBlinking)
+    digitalWrite(LED_BUILTIN, HIGH);
+
+  // Prompt user input
+  Serial.println("\nInput the lighting intensity (<ledstrip_id: uint2_t> <intensity: uint8_t>");
+  prompted = true;  // User
 }
 
-void loop() {
-  if(!Serial.availableForWrite())
-    return;
-  Serial.println("Input the lighting intensity (<ledstrip_id: uint2_t> <intensity: uint8_t>");
+void loop()
+{
+  if(Serial.available())
+    serialEvent();
 
-  // Identify the target LED strip id to be adjusted
-  uint8_t  ledStripId = 0;  // 255
-  while(!Serial.available())
-    delay(100);  // Wait 100 ms
-  Serial.read(&ledStripId, sizeof ledStripId);
-  if(Serial.availableForWrite()) {
-    Serial.print("Adjusting #LED: ");
-    Serial.println(ledStripId);
-  }
-  // Blink the number of times equal to the selected LED ID
-  for(uint16_t i = 0; i < ledStripId; ++i) {
-    digitalWrite(LED_BUILTIN, LOW);
-    delay(20);  // Wait 20 ms
-    digitalWrite(LED_BUILTIN, HIGH);
+  size_t  wireBytes = Wire.available();
+  if(wireBytes)
+    getSyncData(wireBytes);
+
+  if(!prompted && Serial.availableForWrite()) {
+    Serial.println("\nInput the lighting intensity (<ledstrip_id: uint2_t> <intensity: uint8_t>");
+    prompted = true;
   }
 
-  // Identify the target intesity of the required LED strip
-  uint8_t  intensity = -1;  // 255
-  while(!Serial.available())
-    delay(100);  // Wait 100 ms
-  Serial.read(&intensity, sizeof intensity);
-  if(Serial.availableForWrite()) {
-    Serial.print("Set intensity: ");
-    Serial.println(intensity);
-  }
-  // Use internal LED to visualize the target intensify
-  digitalWrite(LED_BUILTIN, LOW);
-  uint16_t  dbgLedIters = dbgLedCycle / dbgLedGrain;
-  uint8_t intensHigh10 = 1 + (intensity / 256.f) * 10;
-  for(uint16_t i = 0; i < dbgLedIters; ++i) {
-    if ((i%10 + 1) * intensHigh10 >= 10)
-      digitalWrite(LED_BUILTIN, HIGH);
-    else digitalWrite(LED_BUILTIN, LOW);
-    delay(dbgLedGrain);
-  }
+  while(!(Serial.available() || Wire.available()))
+    delay(10); // Wait 10 msec = 100 fps
 
-  switch (ledStripId) {
-  case 1:
-    dacWrite(DAC1, intensity);  // 255= 3.3V 128=1.65V
-    break;
-  case 2:
-    dacWrite(DAC1, intensity);  // 255= 3.3V 128=1.65V
-    break;
-  case 3:
-    // TODO: Transfer signal to the DAC1 in the Slave Board
-    break;
-  case 4:
-    // TODO: Transfer signal to the DAC2 in the Slave Board
-    break;
-  default:
-    break;
-  }
+  // // Identify the target LED strip id to be adjusted
+  // uint8_t  ledStripId = 0;  // 255
+  // // while(!Serial.available())
+  // //   delay(100);  // Wait 100 ms
+  // Serial.read(&ledStripId, sizeof ledStripId);
+
+  // // Identify the target intesity of the required LED strip
+  // uint8_t  intensity = -1;  // 255
+  // // while(!Serial.available())
+  // //   delay(100);  // Wait 100 ms
+  // Serial.read(&intensity, sizeof intensity);
+
+  // // Report ledStripId
+  // if(Serial.availableForWrite()) {
+  //   Serial.print("Adjusting #LED: ");
+  //   Serial.println(ledStripId);
+  // }
+  // // Blink the number of times equal to the selected LED ID
+  // for(uint16_t i = 0; i < ledStripId; ++i) {
+  //   digitalWrite(LED_BUILTIN, LOW);
+  //   delay(20);  // Wait 20 ms
+  //   digitalWrite(LED_BUILTIN, HIGH);
+  // }
+
+  // // Report ledStripId
+  // if(Serial.availableForWrite()) {
+  //   Serial.print("Set intensity: ");
+  //   Serial.println(intensity);
+  // }
+  // // Use internal LED to visualize the target intensify
+  // digitalWrite(LED_BUILTIN, LOW);
+  // uint16_t  dbgLedIters = dbgLedCycle / dbgLedGrain;
+  // uint8_t intensHigh10 = 1 + (intensity / 256.f) * 10;
+  // for(uint16_t i = 0; i < dbgLedIters; ++i) {
+  //   if ((i%10 + 1) * intensHigh10 >= 10)
+  //     digitalWrite(LED_BUILTIN, HIGH);
+  //   else digitalWrite(LED_BUILTIN, LOW);
+  //   delay(dbgLedGrain);
+  // }
+
+  // switch (ledStripId) {
+  // case 1:
+  //   dacWrite(DAC1, intensity);  // 255= 3.3V 128=1.65V
+  //   break;
+  // case 2:
+  //   dacWrite(DAC1, intensity);  // 255= 3.3V 128=1.65V
+  //   break;
+  // case 3:
+  // case 4:
+  //   // Transfer signal to the DAC1 in the Slave Board
+  //   Wire.beginTransmission(0); // transmit to device #0
+  //   Wire.write(ledStripId);        // sends five bytes
+  //   Wire.write(intensity);              // sends one byte  
+  //   Wire.endTransmission();    // stop transmitting
+  //   break;
+  // default:
+  //   break;
+  // }
 
   // Read signals from the grabber
   // int cam1 = digitalRead(CAM1);
@@ -154,46 +276,3 @@ void loop() {
   //   // Serial.println (b);
   // }
 }
-
-
-// // External DACs via I2S (adafruit-i2s-stereo-decoder-uda1334a.pdf):
-// // PIN mapping:
-// RXD	[CLK]	  	SCK	(WSEL/LRCLK) (like in adafruit-i2s-stereo-decoder-uda1334a.pdf)
-// TXD [TD0 TCK]	BCK	[NOTE: I mixed TXD/RXD when ask Amrit to connect wires]
-// [SD0] IO23		  DIN	(IO23 according to sp32_technical_reference_manual_en.pdf)
-
-// #include <I2S.h>
-
-// #define FREQUENCY 440  // frequency of sine wave in Hz
-// #define AMPLITUDE 10000  // amplitude of sine wave
-// #define SAMPLERATE 44100  // sample rate in Hz
-
-// int16_t sinetable[SAMPLERATE / FREQUENCY];
-// uint32_t sample = 0;
-
-// #define PI 3.14159265
-
-// void setup() {
-//   Serial.begin(115200);
-//   Serial.println("I2S sine wave tone");
-//   // start I2S at the sample rate with 16-bits per sample
-//   if (!I2S.begin(I2S_PHILIPS_MODE, SAMPLERATE, 16)) {  // Philips Standard, MSB Alignment Standard, and PCM Standard are supported by ESP32: esp32_technical_reference_manual_en.pdf
-//     Serial.println("Failed to initialize I2S!");
-//     while (1); // do nothing
-//   }
-//   // fill in sine wave table
-//   for (uint16_t s=0; s < (SAMPLERATE / FREQUENCY); s++) {
-//    sinetable[s] = sin(2.0 * PI * s / (SAMPLERATE/FREQUENCY)) * AMPLITUDE;
-//   }
-// }
-
-// void loop() {
-//   if (sample == (SAMPLERATE / FREQUENCY)) {
-//     sample = 0;
-//   }
-//   // write the same sample twice, once for left and once for the right channel
-//   I2S.write((int16_t) sinetable[sample]); // We'll just have same tone on both!
-//   I2S.write((int16_t) sinetable[sample]);
-//   // increment the counter for the next sample in the sine wave table
-//   sample++;
-// }

@@ -29,6 +29,7 @@ enum PSD_PINS {
 
 uint16_t  dbgLedCycle = 1000;  // In ms for blinking
 uint16_t  dbgLedGrain = 4;  // In ms for blinking; 25 fps = 4 ms
+bool led1On = false, led2On = false;  // Whether LEDN is on
 
 //! @brief Report LED Strips State Change to UART (Serial Port) and via the builtin LED
 //! 
@@ -97,6 +98,25 @@ void getSyncData(int nbytes)
   prompted = false;
 }
 
+//! @brief Set the required intensity for the DAC/LedPin, eliminating the residual lighting
+//! 
+//! @param dac  - target DAC
+//! @param uint8_t  - LED intensity
+void setIntensity(uint8_t dac, uint8_t intensity) {
+  LED_PINS ledPin = dac == DAC1 ? LED1 : LED2;
+  bool &ledOn = ledPin == LED1 ? led1On : led2On;
+  if(intensity) {
+    if(!ledOn) {
+      digitalWrite(ledPin, HIGH);  // Activate lighting strip
+      ledOn = true;
+    }
+    dacWrite(dac, intensity);  // 255= 3.3V 128=1.65V
+  } else if(ledOn) {
+    digitalWrite(ledPin, LOW);  // Deactivate lighting strip to prevent residual lighting
+    ledOn = false;
+  }
+}
+
 // ATTENTION: this Arduino callback is not defined in ESP32, so it is called manually
 void serialEvent() {
   assert(Serial.available() == 2 && "2 bytes are expected: ledStripId, intensity");
@@ -108,10 +128,12 @@ void serialEvent() {
   Serial.read(&intensity, sizeof intensity);
 
   // Adjust LED strips lighting intensity
+  // Note: for the intensity 0 some signal is still present on the DAC, so the lighting should be turned of by the trigger signal
   if(0b0001 & ledStripIdMask)
-    dacWrite(DAC1, intensity);  // 255= 3.3V 128=1.65V
+    setIntensity(DAC1, intensity);
+
   if(0b0010 & ledStripIdMask)
-    dacWrite(DAC2, intensity);  // 255= 3.3V 128=1.65V
+    setIntensity(DAC2, intensity);
 
   const uint8_t  idMaskCut = 0b1100 & ledStripIdMask;
   if(idMaskCut) {
@@ -125,7 +147,7 @@ void serialEvent() {
 
   const uint8_t  idMaskLoc = 0b11 & ledStripIdMask;
   if(idMaskLoc)
-  reportLedState(idMaskLoc, intensity, false);
+    reportLedState(idMaskLoc, intensity, false);
   prompted = false;
 }
 
@@ -169,7 +191,9 @@ void setup()
   dacWrite(DAC2, 255);
   // Perform lighting strips activation
   digitalWrite(LED1, HIGH);
+  led1On = true;
   digitalWrite(LED2, HIGH);
+  led2On = true;
   // Activate builtin LED
   if(dbgBlinking)
     digitalWrite(LED_BUILTIN, HIGH);

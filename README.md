@@ -61,7 +61,7 @@ Configure the opened connection and save it as a default configuration: press `C
 \#1 D1 Mini is powered by USB (and, hence, can be externally controlled and re-flashed at any time).
 \#2 D1 Mini can be powered either from your dedicated power supply (3.3V DC) or from 3.3V pin of #1 D1 Mini connected to 3.3V pin (note that VCC pin accepts 5V rather than 3.3V). The ground supply of #2 D1 Mini is GND pin located near its VCC pin.
 
-D1 Mini boards synchronization can be performed either by I2C (which are IO22=SCL0 and IO21=SDA0 by default), or by one of the available UARTs (Serial ports), or by any custom 3 pins (e.g., IO33,  IO27, IO32).
+D1 Mini boards synchronization can be performed either by I2C (which are IO22=SCL0 and IO21=SDA0 by default; it might be necessary to wire also the grounds of the boards to get I2C work), or by one of the available UARTs (Serial ports), or by any custom 3 pins (e.g., IO33,  IO27, IO32).
 ### #1 D1 Mini ESP32 WeMos
 **2 internal DACs (IO25, IO26) for Analog O/P:**
 IO25  <-  1. O/P  Analog 0…3.3V  Channel Top Strip L1

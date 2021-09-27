@@ -30,6 +30,7 @@ enum PSD_PINS {
 uint16_t  dbgLedCycle = 1000;  // In ms for blinking
 uint16_t  dbgLedGrain = 4;  // In ms for blinking; 25 fps = 4 ms
 bool led1On = false, led2On = false;  // Whether LEDN is on
+uint16_t  vp1 = 0xACAC, vp2 = 0xACAC;  // Photodioudes sensing: some stable initial value, which is unlikely to occur
 
 //! @brief Report LED Strips State Change to UART (Serial Port) and via the builtin LED
 //! 
@@ -139,8 +140,8 @@ void serialEvent() {
   if(idMaskCut) {
     // Transfer signal to the DAC1 in the Slave Board
     Wire.beginTransmission(0); // transmit to device #0
-    Wire.write(idMaskCut);        // sends five bytes
-    Wire.write(intensity);              // sends one byte  
+    Wire.write(idMaskCut);     // sends five bytes
+    Wire.write(intensity);     // sends one byte  
     Wire.endTransmission();    // stop transmitting
     Serial.printf("Transferring to wire (idMask2, intensity): %#X %#X\r\n", idMaskCut, intensity);
   }
@@ -205,6 +206,8 @@ void setup()
 
 void loop()
 {
+  // TODO: consider master/slave initialization via serial port
+
   if(Serial.available())
     serialEvent();
 
@@ -212,6 +215,19 @@ void loop()
   if(wireBytes)
     getSyncData(wireBytes);
 
+  // Sense photodiodes
+  uint16_t vp = analogRead(PSD1);
+  if(vp != vp1 && Serial.availableForWrite()) {
+    Serial.printf("\nSensed lighting intensity 1: %u\n", vp);
+    vp1 = vp;
+  }
+  vp = analogRead(PSD2);
+  if(vp != vp2 && Serial.availableForWrite()) {
+    Serial.printf("\nSensed lighting intensity 1: %u\n", vp);
+    vp2 = vp;
+  }
+
+  // Propmp user input
   if(!prompted && Serial.availableForWrite()) {
     Serial.println("\nInput the lighting intensity (<ledstrip_id: uint2_t> <intensity: uint8_t>");
     prompted = true;

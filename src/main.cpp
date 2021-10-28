@@ -5,7 +5,7 @@
 #include <WireSlave.h>  // I2C ESP32 Slave
 
 // ATTENTION: Should be commented when compiling the slave
-#define BOARD_MASTER
+//#define BOARD_MASTER
 constexpr bool  dbgBlinking = true;  // Blink with the builtin LED for the debugging perposes
 bool prompted = false;  // Whether the user input is prompted
 // I2C connectivity
@@ -204,7 +204,7 @@ void setup()
         while(1) delay(100);
     }
 
-    WireSlave.onReceive(receiveEvent);
+    WireSlave.onReceive(getSyncData);
 #endif  // BOARD_MASTER
   //Wire.onReceive(getSyncData); // Register Wire receive event; NOTE: that is not implemented for ESP32
 

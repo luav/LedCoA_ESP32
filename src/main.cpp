@@ -1,11 +1,17 @@
 #include <Arduino.h>
 // #include <stdio.h>  // printf (inlcuding the output to serial port)
 #include <Wire.h>  // I2C
+//#include <WirePacker.h>  // Data packaging for I2C transmission when sending non-byte values
+#include <WireSlave.h>  // I2C ESP32 Slave
 
-// // ATTENTION: Should be commented when compiling the slave
-// #define BOARD_MASTER
+// ATTENTION: Should be commented when compiling the slave
+#define BOARD_MASTER
 constexpr bool  dbgBlinking = true;  // Blink with the builtin LED for the debugging perposes
 bool prompted = false;  // Whether the user input is prompted
+// I2C connectivity
+constexpr uint8_t I2C_SLAVE_ADDR = 0x04;
+constexpr uint8_t SDA_PIN = 21;
+constexpr uint8_t SCL_PIN = 22;
 
 //! Digital input pins from cameras
 enum CAM_PINS {
@@ -80,8 +86,15 @@ void reportLedState(uint8_t ledStripIdMask, uint8_t intensity, bool wire)
 void getSyncData(int nbytes)
 {
   assert(nbytes == 2 && "2 bytes are expected: ledStripId, intensity");
+#ifdef BOARD_MASTER
   const uint8_t ledStripIdMask = Wire.read();
+    //const bool intencifyAnailable = Wire.available() >= 1;
   const uint8_t intensity = Wire.read();
+#else
+    const uint8_t ledStripIdMask = WireSlave.read();
+    //const bool intencifyAnailable = WireSlave.available() >= 1;
+    const uint8_t intensity = WireSlave.read();
+#endif  // BOARD_MASTER
 
   if(!(0b1100 & ledStripIdMask)) {
     if(Serial.availableForWrite())
@@ -139,8 +152,8 @@ void serialEvent() {
   const uint8_t  idMaskCut = 0b1100 & ledStripIdMask;
   if(idMaskCut) {
     // Transfer signal to the DAC1 in the Slave Board
-    Wire.beginTransmission(0); // transmit to device #0
-    Wire.write(idMaskCut);     // sends five bytes
+    Wire.beginTransmission(I2C_SLAVE_ADDR); // transmit to device I2C_SLAVE_ADDR
+    Wire.write(idMaskCut);     // sends one byte
     Wire.write(intensity);     // sends one byte  
     Wire.endTransmission();    // stop transmitting
     Serial.printf("Transferring to wire (idMask2, intensity): %#X %#X\r\n", idMaskCut, intensity);
@@ -182,7 +195,17 @@ void setup()
   Serial.begin(115200);
 
   // I2C Setup
-  Wire.begin(); // join i2c bus (address optional for master)
+  #ifdef BOARD_MASTER
+    Wire.begin(); // join i2c bus (address optional for master); begin(SDA_PIN=21, SCL_PIN=22)
+  #else
+    bool success = WireSlave.begin(SDA_PIN, SCL_PIN, I2C_SLAVE_ADDR);
+    if (!success) {
+        Serial.println("I2C slave init failed");
+        while(1) delay(100);
+    }
+
+    WireSlave.onReceive(receiveEvent);
+#endif  // BOARD_MASTER
   //Wire.onReceive(getSyncData); // Register Wire receive event; NOTE: that is not implemented for ESP32
 
   // Perform lighting strips activation

@@ -17,12 +17,18 @@ ESP32 Pinout:
 ![ESP32 D1Mini WeMos DevBoard](MH-ET_LIVE_D1_mini_ESP32_pinout.jpg)
 
 ## Build
+
+Depending on whether you build the firmware for the master or slave boards, it is necessary to (un)comment the respective macro definition at the top of `main.cpp`:
+```c++
+#define BOARD_MASTER  // Should be specified only for the master board build
+```
+
 Use the [PlatformIO IDE](https://platformio.org/install/ide) extension of the [Visual Studio Code IDE](https://code.visualstudio.com/) to build and flash the firmware to ESP32 D1Mini WeMos DevBoards.
 
 ## Usage
 
 ESP32 Boards are controllable via the UART (Serial port) from the host PC, which typically features the Euresys Coaxlink Camera Grabber.  
-After flashing an ESP32 board, connect their ports as specified in the sections [ESP32 Port Mapping](#esp32-port-mapping), then use minicom (see its [configuration below](#minicom-for-uart-reading)) or other application to read from the UART output from the master board.
+After flashing an ESP32 board, connect their ports as specified in the sections [ESP32 Port Mapping](#esp32-port-mapping), then use minicom (see its [configuration below](#minicom-for-uart-reading)) or other application to read from the UART output of the master (or slave) board.
 
 Connect to the master board (you can list available USB devices by `$ ls /dev/ttyUSB*`; we assume that the master board on `ttyUSB0`):
 ```sh

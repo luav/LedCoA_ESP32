@@ -183,6 +183,18 @@ void serialEvent() {
   prompted = false;
 }
 
+void i2cClientScan()
+{
+  for(uint8_t addr = 1; addr <= 127; addr++ ) {
+    Wire.beginTransmission(addr);
+    const uint8_t err = Wire.endTransmission();
+    if (err == 0)
+      Serial.printf("I2C device found at %#X\r\n", addr);
+    else if (err != 2)
+      Serial.printf("Error at the I2C device %#X: %#X\r\n", addr, err);
+  }
+}
+
 void setup()
 {
   // Setup internal LED for debuging perposese
@@ -216,9 +228,10 @@ void setup()
   // pinMode(I2C_SCL, INPUT_PULLUP);
 #ifdef BOARD_MASTER
     bool success = Wire.begin(I2C_SDA, I2C_SCL); // Join i2c bus (address optional for master)
-    if(success)
+    if(success) {
       Serial.println("I2C Master started");
-    else Serial.println("I2C Master failed");
+      i2cClientScan();
+    } else Serial.println("I2C Master failed");
 #else
     bool success = WireSlave1.begin(I2C_SDA, I2C_SCL, I2C_SLAVE_ADDR);
     if (!success) {
@@ -254,37 +267,23 @@ void setup()
   prompted = true;  // User
 }
 
-void i2cTest()
-{
-  for(uint8_t addr = 1; addr <= 127; addr++ ) {
-    Wire.beginTransmission(addr);
-    const uint8_t err = Wire.endTransmission();
-    if (err == 0)
-      Serial.printf("I2C device found at %#X\r\n", addr);
-    else if (err != 2)
-      Serial.printf("Error at the I2C device %#X: %#X\r\n", addr, err);
-  }
-}
-
 uint16_t  lsCtr = 0;  // Light sensing counter to reduce output cluttering
 constexpr uint16_t  lsTrig = 2000;  // Light sensing output trigger
 
 void loop()
 {
   // TODO: consider master/slave initialization via serial port
-// #ifdef BOARD_MASTER
-//   i2cTest();
-// #endif
 
   // Note: serialEvent() should be called automatically between each loop() call when a new data comes in the hardware serial RX, but that does not happen on ESP32
+#ifdef BOARD_MASTER  
   if(Serial.available())
     serialEvent();
-
-// #ifndef BOARD_MASTER
-//   size_t  wireBytes = WireSlave1.available();
-//   if(wireBytes)
-//     getSyncData(wireBytes);
-// #endif
+#else
+  WireSlave1.update();  // Required by ESP32 I2C Slave library
+  // size_t  wireBytes = WireSlave1.available();
+  // if(wireBytes)
+  //   getSyncData(wireBytes);
+#endif
 
   // Sense photodiodes
   ++lsCtr;

@@ -1,20 +1,23 @@
 #include <Arduino.h>
 // #include <stdio.h>  // printf (inlcuding the output to serial port)
 #include <Wire.h>  // I2C
-//#include <WirePacker.h>  // Data packaging for I2C transmission when sending non-byte values
+#include <WirePacker.h>  // Data packaging for I2C transmission when sending data. ATTENTION: non-packed data is ignored by slave
 #include <WireSlave.h>  // I2C ESP32 Slave
 
 // ATTENTION: Should be commented when compiling the slave
-//#define BOARD_MASTER
+#define BOARD_MASTER
 constexpr bool  dbgBlinking = true;  // Blink with the builtin LED for the debugging perposes
 bool prompted = false;  // Whether the user input is prompted
 // I2C connectivity
-constexpr uint8_t I2C_SLAVE_ADDR = 0x04;
-constexpr uint8_t SDA_PIN = 21;
-constexpr uint8_t SCL_PIN = 22;
+constexpr uint8_t I2C_SLAVE_ADDR = 0x04;  // 0x55
+
+enum I2C_PINS: uint8_t {
+  I2C_SDA = 21,  // Standard 21 or -1
+  I2C_SCL = 22  // Standard 22 or -1
+};
 
 //! Digital input pins from cameras
-enum CAM_PINS {
+enum CAM_PINS: uint8_t {
   CAM1 = A13,  // P15
   CAM2 = A14,  // P13
   // CAM3 = A15,  // P12
@@ -22,13 +25,13 @@ enum CAM_PINS {
 };
 
 //! Digital Trigger Pulse for the lighting strip activation
-enum LED_PINS {
+enum LED_PINS: uint8_t {
   LED1 = 16, // 32;  <- 5. O/P  Digital Trigger Pulse OFF:  0V  Pulse ON:  3.3V  Channel Top Strip L1
   LED2 = 17 // 27;  <- 8. O/P  Digital Trigger Pulse OFF:  0V  Pulse ON:  3.3V  Channel Bottom Strip L3U
 };
 
 // ! Input signals from the photo sensing diodes
-enum PSD_PINS {
+enum PSD_PINS: uint8_t {
   PSD1 = 34, // 34 (VDET_1 = ADC1_6 = Arduino's ADC0)  <- 9. I/P  Analog 0…3.3V  FB Photo diode Channel Top Strip L1
   PSD2 = 35 // 35 (VDET_2 = ADC1_7 = Arduino's ADC1)  <- 12. I/P  Analog 0…3.3V  FB Photo diode Channel Bottom Strip L3U
 };
@@ -80,38 +83,6 @@ void reportLedState(uint8_t ledStripIdMask, uint8_t intensity, bool wire)
   }
 }
 
-//! @brief Syncronization receiver callback
-//! 
-//! @param nbytes  - the number of bytes to be received
-void getSyncData(int nbytes)
-{
-  assert(nbytes == 2 && "2 bytes are expected: ledStripId, intensity");
-#ifdef BOARD_MASTER
-  const uint8_t ledStripIdMask = Wire.read();
-    //const bool intencifyAnailable = Wire.available() >= 1;
-  const uint8_t intensity = Wire.read();
-#else
-    const uint8_t ledStripIdMask = WireSlave.read();
-    //const bool intencifyAnailable = WireSlave.available() >= 1;
-    const uint8_t intensity = WireSlave.read();
-#endif  // BOARD_MASTER
-
-  if(!(0b1100 & ledStripIdMask)) {
-    if(Serial.availableForWrite())
-      Serial.printf("WARNING: The led id mask is not controllable by the slave board: %#X\n", ledStripIdMask);
-    return;
-  }
-
-  // Adjust LED strips lighting intensity
-  if(0b0100 & ledStripIdMask)
-    dacWrite(DAC1, intensity);  // 255= 3.3V 128=1.65V
-  if(0b1000 & ledStripIdMask)
-    dacWrite(DAC2, intensity);  // 255= 3.3V 128=1.65V
-
-  reportLedState(ledStripIdMask, intensity, true);
-  prompted = false;
-}
-
 //! @brief Set the required intensity for the DAC/LedPin, eliminating the residual lighting
 //! 
 //! @param dac  - target DAC
@@ -131,9 +102,47 @@ void setIntensity(uint8_t dac, uint8_t intensity) {
   }
 }
 
+//! @brief Syncronization receiver callback
+//! 
+//! @param nbytes  - the number of bytes to be received
+void getSyncData(int nbytes)
+{
+  Serial.println("getSyncData() Slave");
+  // assert(nbytes == 2 && "2 bytes are expected: ledStripId, intensity");
+  if(WireSlave1.available() < 2)
+    return;
+// #ifdef BOARD_MASTER
+//   Serial.println("getSyncData() Master");
+//   const uint8_t ledStripIdMask = Wire.read();
+//     //const bool intencifyAnailable = Wire.available() >= 1;
+//   const uint8_t intensity = Wire.read();
+// #else
+  const uint8_t ledStripIdMask = WireSlave1.read();
+  //const bool intencifyAnailable = WireSlave1.available() >= 1;
+  const uint8_t intensity = WireSlave1.read();
+// #endif  // BOARD_MASTER
+
+  if(!(0b1100 & ledStripIdMask)) {
+    if(Serial.availableForWrite())
+      Serial.printf("WARNING: The led id mask is not controllable by the slave board: %#X\r\n", ledStripIdMask);
+    return;
+  }
+
+  // Adjust LED strips lighting intensity
+  if(0b0100 & ledStripIdMask)
+    setIntensity(DAC1, intensity);  // 255= 3.3V 128=1.65V
+  if(0b1000 & ledStripIdMask)
+    setIntensity(DAC2, intensity);  // 255= 3.3V 128=1.65V
+
+  reportLedState(ledStripIdMask, intensity, true);
+  prompted = false;
+}
+
 // ATTENTION: this Arduino callback is not defined in ESP32, so it is called manually
 void serialEvent() {
-  assert(Serial.available() == 2 && "2 bytes are expected: ledStripId, intensity");
+  //assert(Serial.available() == 2 && "2 bytes are expected: ledStripId, intensity");
+  if(Serial.available() < 2)
+    return;
   uint8_t  ledStripIdMask = 0;  // 255
   // while(!Serial.available())
   //   delay(100);  // Wait 100 ms
@@ -150,14 +159,23 @@ void serialEvent() {
     setIntensity(DAC2, intensity);
 
   const uint8_t  idMaskCut = 0b1100 & ledStripIdMask;
+#ifdef BOARD_MASTER
   if(idMaskCut) {
+    WirePacker packer;
+    packer.write(idMaskCut);
+    packer.write(intensity);
+    packer.end();
+
     // Transfer signal to the DAC1 in the Slave Board
     Wire.beginTransmission(I2C_SLAVE_ADDR); // transmit to device I2C_SLAVE_ADDR
-    Wire.write(idMaskCut);     // sends one byte
-    Wire.write(intensity);     // sends one byte  
-    Wire.endTransmission();    // stop transmitting
-    Serial.printf("Transferring to wire (idMask2, intensity): %#X %#X\r\n", idMaskCut, intensity);
+    while (packer.available())    // write every packet byte
+      Wire.write(packer.read());
+    // Wire.write(idMaskCut);     // sends one byte
+    // Wire.write(intensity);     // sends one byte  
+    const uint8_t err = Wire.endTransmission();    // stop transmitting
+    Serial.printf("Transferring to wire %#X (idMask2: %#X, intensity: %#X), errCode: %#X\r\n", I2C_SLAVE_ADDR, idMaskCut, intensity, err);
   }
+#endif  // BOARD_MASTER
 
   const uint8_t  idMaskLoc = 0b11 & ledStripIdMask;
   if(idMaskLoc)
@@ -182,9 +200,6 @@ void setup()
   pinMode(PSD1, INPUT);    // LED strip activation
   pinMode(PSD2, INPUT);    // LED strip activation
 
-  // Initialise I2C communication as Master
-  // Wire.begin();
-
   // Setup input pins from the egrabber
   pinMode(CAM1, INPUT);
   pinMode(CAM2, INPUT);
@@ -193,20 +208,32 @@ void setup()
 
   // Serial monitor setup
   Serial.begin(115200);
+  Serial.setDebugOutput(true);
 
   // I2C Setup
-  #ifdef BOARD_MASTER
-    Wire.begin(); // join i2c bus (address optional for master); begin(SDA_PIN=21, SCL_PIN=22)
-  #else
-    bool success = WireSlave.begin(SDA_PIN, SCL_PIN, I2C_SLAVE_ADDR);
+  // // Enable pull-up resistors for I2C, which is performed automatically inside Wire.begin()
+  // pinMode(I2C_SDA, INPUT_PULLUP);
+  // pinMode(I2C_SCL, INPUT_PULLUP);
+#ifdef BOARD_MASTER
+    bool success = Wire.begin(I2C_SDA, I2C_SCL); // Join i2c bus (address optional for master)
+    if(success)
+      Serial.println("I2C Master started");
+    else Serial.println("I2C Master failed");
+#else
+    bool success = WireSlave1.begin(I2C_SDA, I2C_SCL, I2C_SLAVE_ADDR);
     if (!success) {
         Serial.println("I2C slave init failed");
         while(1) delay(100);
-    }
-
-    WireSlave.onReceive(getSyncData);
+    } else Serial.printf("I2C Slave started at %#X\r\n", I2C_SLAVE_ADDR);
+    WireSlave1.onReceive(getSyncData);
 #endif  // BOARD_MASTER
   //Wire.onReceive(getSyncData); // Register Wire receive event; NOTE: that is not implemented for ESP32
+
+// #if CONFIG_IDF_TARGET_ESP32
+//   char message[64];
+//   snprintf(message, 64, "%u Packets.", i++);
+//   Wire.slaveWrite((uint8_t *)message, strlen(message));
+// #endif
 
   // Perform lighting strips activation
   delay(20); // Wait 20 msec
@@ -223,40 +250,70 @@ void setup()
     digitalWrite(LED_BUILTIN, HIGH);
 
   // Prompt user input
-  Serial.println("\nInput the lighting intensity (<ledstrip_id: uint2_t> <intensity: uint8_t>");
+  Serial.println("\r\nInput the lighting intensity (<ledstrip_id: uint2_t> <intensity: uint8_t>");
   prompted = true;  // User
 }
+
+void i2cTest()
+{
+  for(uint8_t addr = 1; addr <= 127; addr++ ) {
+    Wire.beginTransmission(addr);
+    const uint8_t err = Wire.endTransmission();
+    if (err == 0)
+      Serial.printf("I2C device found at %#X\r\n", addr);
+    else if (err != 2)
+      Serial.printf("Error at the I2C device %#X: %#X\r\n", addr, err);
+  }
+}
+
+uint16_t  lsCtr = 0;  // Light sensing counter to reduce output cluttering
+constexpr uint16_t  lsTrig = 2000;  // Light sensing output trigger
 
 void loop()
 {
   // TODO: consider master/slave initialization via serial port
+// #ifdef BOARD_MASTER
+//   i2cTest();
+// #endif
 
+  // Note: serialEvent() should be called automatically between each loop() call when a new data comes in the hardware serial RX, but that does not happen on ESP32
   if(Serial.available())
     serialEvent();
 
-  size_t  wireBytes = Wire.available();
-  if(wireBytes)
-    getSyncData(wireBytes);
+// #ifndef BOARD_MASTER
+//   size_t  wireBytes = WireSlave1.available();
+//   if(wireBytes)
+//     getSyncData(wireBytes);
+// #endif
 
   // Sense photodiodes
+  ++lsCtr;
   uint16_t vp = analogRead(PSD1);
   if(vp != vp1 && Serial.availableForWrite()) {
-    Serial.printf("\nSensed lighting intensity 1: %u\n", vp);
+    if(lsCtr >= lsTrig)
+      Serial.printf("\r\nSensed lighting intensity 1: %u\r\n", vp);
     vp1 = vp;
   }
   vp = analogRead(PSD2);
   if(vp != vp2 && Serial.availableForWrite()) {
-    Serial.printf("\nSensed lighting intensity 1: %u\n", vp);
+    if(lsCtr >= lsTrig)
+      Serial.printf("\r\nSensed lighting intensity 2: %u\r\n", vp);
     vp2 = vp;
   }
+  if(lsCtr >= lsTrig)
+    lsCtr = 0;
 
   // Propmp user input
   if(!prompted && Serial.availableForWrite()) {
-    Serial.println("\nInput the lighting intensity (<ledstrip_id: uint2_t> <intensity: uint8_t>");
+    Serial.println("\r\nInput the lighting intensity (<ledstrip_id: uint2_t> <intensity: uint8_t>");
     prompted = true;
   }
 
-  while(!(Serial.available() || Wire.available()))
+  while(!(Serial.available()
+// #ifndef BOARD_MASTER
+//     || WireSlave1.available()
+// #endif
+  ))
     delay(10); // Wait 10 msec = 100 fps
 
   // // Identify the target LED strip id to be adjusted
@@ -297,25 +354,6 @@ void loop()
   //     digitalWrite(LED_BUILTIN, HIGH);
   //   else digitalWrite(LED_BUILTIN, LOW);
   //   delay(dbgLedGrain);
-  // }
-
-  // switch (ledStripId) {
-  // case 1:
-  //   dacWrite(DAC1, intensity);  // 255= 3.3V 128=1.65V
-  //   break;
-  // case 2:
-  //   dacWrite(DAC1, intensity);  // 255= 3.3V 128=1.65V
-  //   break;
-  // case 3:
-  // case 4:
-  //   // Transfer signal to the DAC1 in the Slave Board
-  //   Wire.beginTransmission(0); // transmit to device #0
-  //   Wire.write(ledStripId);        // sends five bytes
-  //   Wire.write(intensity);              // sends one byte  
-  //   Wire.endTransmission();    // stop transmitting
-  //   break;
-  // default:
-  //   break;
   // }
 
   // Read signals from the grabber

@@ -45,7 +45,7 @@ Transferring to wire (idMask2, intensity): 0X4 0XAA
 LED strips id (mask): 0X1
 Set intensity: 0XAA
 ```
-To exit from the minicom (which is mandatory before the reflashing), press `Ctrl+A X` and select `Yes`.
+To *exit from the minicom (which is mandatory before the reflashing)*, press `Ctrl+A X` and select `Yes`.
 
 ### Minicom for UART Reading
 Minicom can be installed by the following command:

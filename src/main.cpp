@@ -1,15 +1,13 @@
 #include <Arduino.h>
 // #include <stdio.h>  // printf (inlcuding the output to serial port)
 #include <Wire.h>  // I2C
-#include <WirePacker.h>  // Data packaging for I2C transmission when sending data. ATTENTION: non-packed data is ignored by slave
-#include <WireSlave.h>  // I2C ESP32 Slave
 
 // ATTENTION: Should be commented when compiling the slave
 #define BOARD_MASTER
 constexpr bool  dbgBlinking = true;  // Blink with the builtin LED for the debugging perposes
 bool prompted = false;  // Whether the user input is prompted
 // I2C connectivity
-constexpr uint8_t I2C_SLAVE_ADDR = 0x04;  // 0x55
+constexpr uint8_t I2C_SLAVE_ADDR = 0x55;  // 0x0C;  // 0x04; 0x55
 
 enum I2C_PINS: uint8_t {
   I2C_SDA = 21,  // Standard 21 or -1
@@ -109,7 +107,7 @@ void getSyncData(int nbytes)
 {
   Serial.println("getSyncData() Slave");
   // assert(nbytes == 2 && "2 bytes are expected: ledStripId, intensity");
-  if(WireSlave1.available() < 2)
+  if(Wire.available() < 2)
     return;
 // #ifdef BOARD_MASTER
 //   Serial.println("getSyncData() Master");
@@ -117,9 +115,9 @@ void getSyncData(int nbytes)
 //     //const bool intencifyAnailable = Wire.available() >= 1;
 //   const uint8_t intensity = Wire.read();
 // #else
-  const uint8_t ledStripIdMask = WireSlave1.read();
+  const uint8_t ledStripIdMask = Wire.read();
   //const bool intencifyAnailable = WireSlave1.available() >= 1;
-  const uint8_t intensity = WireSlave1.read();
+  const uint8_t intensity = Wire.read();
 // #endif  // BOARD_MASTER
 
   if(!(0b1100 & ledStripIdMask)) {
@@ -161,17 +159,10 @@ void serialEvent() {
   const uint8_t  idMaskCut = 0b1100 & ledStripIdMask;
 #ifdef BOARD_MASTER
   if(idMaskCut) {
-    WirePacker packer;
-    packer.write(idMaskCut);
-    packer.write(intensity);
-    packer.end();
-
     // Transfer signal to the DAC1 in the Slave Board
     Wire.beginTransmission(I2C_SLAVE_ADDR); // transmit to device I2C_SLAVE_ADDR
-    while (packer.available())    // write every packet byte
-      Wire.write(packer.read());
-    // Wire.write(idMaskCut);     // sends one byte
-    // Wire.write(intensity);     // sends one byte  
+    Wire.write(idMaskCut);     // sends one byte
+    Wire.write(intensity);     // sends one byte  
     const uint8_t err = Wire.endTransmission();    // stop transmitting
     Serial.printf("Transferring to wire %#X (idMask2: %#X, intensity: %#X), errCode: %#X\r\n", I2C_SLAVE_ADDR, idMaskCut, intensity, err);
   }
@@ -185,14 +176,18 @@ void serialEvent() {
 
 void i2cClientScan()
 {
+  uint8_t  ndevs = 0;
   for(uint8_t addr = 1; addr <= 127; addr++ ) {
     Wire.beginTransmission(addr);
     const uint8_t err = Wire.endTransmission();
-    if (err == 0)
-      Serial.printf("I2C device found at %#X\r\n", addr);
-    else if (err != 2)
-      Serial.printf("Error at the I2C device %#X: %#X\r\n", addr, err);
+    if (err == 0) {
+      ++ndevs;
+      Serial.printf("I2C device #%u found at %#X\r\n", ndevs, addr);
+    }
+    // else if (err != 2)
+    //   Serial.printf("Error at the I2C device %#X: %#X\r\n", addr, err);
   }
+  Serial.printf("I2C clients found: %u\r\n", ndevs);
 }
 
 void setup()
@@ -220,7 +215,7 @@ void setup()
 
   // Serial monitor setup
   Serial.begin(115200);
-  Serial.setDebugOutput(true);
+  // Serial.setDebugOutput(true);
 
   // I2C Setup
   // // Enable pull-up resistors for I2C, which is performed automatically inside Wire.begin()
@@ -233,12 +228,12 @@ void setup()
       i2cClientScan();
     } else Serial.println("I2C Master failed");
 #else
-    bool success = WireSlave1.begin(I2C_SDA, I2C_SCL, I2C_SLAVE_ADDR);
+    bool success = Wire.begin(I2C_SDA, I2C_SCL, I2C_SLAVE_ADDR);
     if (!success) {
         Serial.println("I2C slave init failed");
         while(1) delay(100);
     } else Serial.printf("I2C Slave started at %#X\r\n", I2C_SLAVE_ADDR);
-    WireSlave1.onReceive(getSyncData);
+    Wire.onReceive(getSyncData);
 #endif  // BOARD_MASTER
   //Wire.onReceive(getSyncData); // Register Wire receive event; NOTE: that is not implemented for ESP32
 
@@ -267,40 +262,41 @@ void setup()
   prompted = true;  // User
 }
 
-uint16_t  lsCtr = 0;  // Light sensing counter to reduce output cluttering
-constexpr uint16_t  lsTrig = 2000;  // Light sensing output trigger
-
 void loop()
 {
   // TODO: consider master/slave initialization via serial port
+  constexpr uint16_t latencyMax = 10;  // Response larency, ms; 10 ms = 100 fps
+  constexpr uint16_t dtSerOutMax = 2000;  // Serial port output interval, ms
+  static ulong tresp = 0;  // Response time stamp
+  static ulong tSerOut = 0;  // Serial port output time stamp
 
-  // Note: serialEvent() should be called automatically between each loop() call when a new data comes in the hardware serial RX, but that does not happen on ESP32
 #ifdef BOARD_MASTER  
+  // Note: serialEvent() should be called automatically between each loop() call when a new data comes in the hardware serial RX, but that does not happen on ESP32
   if(Serial.available())
     serialEvent();
-#else
-  WireSlave1.update();  // Required by ESP32 I2C Slave library
-  // size_t  wireBytes = WireSlave1.available();
-  // if(wireBytes)
-  //   getSyncData(wireBytes);
+// #else
+//   // WireSlave1.update();  // Required by ESP32 I2C Slave library
+//   // // size_t  wireBytes = WireSlave1.available();
+//   // // if(wireBytes)
+//   // //   getSyncData(wireBytes);
 #endif
 
   // Sense photodiodes
-  ++lsCtr;
+  const ulong tstamp = millis();
   uint16_t vp = analogRead(PSD1);
   if(vp != vp1 && Serial.availableForWrite()) {
-    if(lsCtr >= lsTrig)
+    if(tstamp - tSerOut >= dtSerOutMax)
       Serial.printf("\r\nSensed lighting intensity 1: %u\r\n", vp);
     vp1 = vp;
   }
   vp = analogRead(PSD2);
   if(vp != vp2 && Serial.availableForWrite()) {
-    if(lsCtr >= lsTrig)
+    if(tstamp - tSerOut >= dtSerOutMax)
       Serial.printf("\r\nSensed lighting intensity 2: %u\r\n", vp);
     vp2 = vp;
   }
-  if(lsCtr >= lsTrig)
-    lsCtr = 0;
+  if(tstamp - tSerOut >= dtSerOutMax)
+    tSerOut = tstamp;
 
   // Propmp user input
   if(!prompted && Serial.availableForWrite()) {
@@ -308,13 +304,19 @@ void loop()
     prompted = true;
   }
 
-  while(!(Serial.available()
-// #ifndef BOARD_MASTER
-//     || WireSlave1.available()
-// #endif
-  ))
-    delay(10); // Wait 10 msec = 100 fps
+  if(tstamp - tresp < latencyMax) {
+    delay(latencyMax - tstamp);
+    tresp = tstamp;
+  }
 
+//   while(!(Serial.available()
+// // #ifndef BOARD_MASTER
+// //     || WireSlave1.available()
+// // #endif
+//   ))
+//     delay(10); // Wait 10 msec = 100 fps
+
+  // --------------------------------------------------
   // // Identify the target LED strip id to be adjusted
   // uint8_t  ledStripId = 0;  // 255
   // // while(!Serial.available())

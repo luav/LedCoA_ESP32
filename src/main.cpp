@@ -36,6 +36,10 @@ enum PSD_PINS: uint8_t {
   PSD2 = 35 // 35 (VDET_2 = ADC1_7 = Arduino's ADC1)  <- 12. I/P  Analog 0…3.3V  FB Photo diode Channel Bottom Strip L3U
 };
 
+enum GRAB_PINS: uint8_t {
+  GTL2 = 33  // Grabber TTL2 is bound to the master board IO33
+};
+
 uint16_t  dbgLedCycle = 1000;  // In ms for blinking
 uint16_t  dbgLedGrain = 4;  // In ms for blinking; 25 fps = 4 ms
 bool led1On = false, led2On = false;  // Whether LEDN is on
@@ -218,6 +222,11 @@ void setup()
   // pinMode(CAM3, INPUT);
   // pinMode(CAM4, INPUT);
 
+  // Setup Grabber communication signals
+#ifdef BOARD_MASTER  
+  pinMode(GTL2, OUTPUT);    // Grabber TTL 2
+#endif
+
   // Serial monitor setup
   Serial.begin(115200);
   Serial.setDebugOutput(true);
@@ -273,6 +282,7 @@ constexpr uint16_t  lsTrig = 2000;  // Light sensing output trigger
 void loop()
 {
   // TODO: consider master/slave initialization via serial port
+  static ulong tstamp = millis();
 
   // Note: serialEvent() should be called automatically between each loop() call when a new data comes in the hardware serial RX, but that does not happen on ESP32
 #ifdef BOARD_MASTER  
@@ -312,8 +322,20 @@ void loop()
 // #ifndef BOARD_MASTER
 //     || WireSlave1.available()
 // #endif
-  ))
+  )) {
     delay(10); // Wait 10 msec = 100 fps
+
+#ifdef BOARD_MASTER  
+    ulong tcur = millis();
+    const ulong dur = 1;  // Duration of the grabber TTL2 signal: 0-1 ms
+    if(tcur - tstamp >= 30) {  // ~ 33 fps;  25 fps = 1/25 = 40 ms
+      digitalWrite(GTL2, HIGH);
+      delay(dur);  // Delay 1 or 0 ms, which is the duration of the signal
+      digitalWrite(GTL2, LOW);
+      tstamp = tcur + dur;
+    }  
+#endif
+  }
 
   // // Identify the target LED strip id to be adjusted
   // uint8_t  ledStripId = 0;  // 255

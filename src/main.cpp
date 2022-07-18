@@ -44,6 +44,7 @@ uint16_t  dbgLedCycle = 1000;  // In ms for blinking
 uint16_t  dbgLedGrain = 4;  // In ms for blinking; 25 fps = 4 ms
 bool led1On = false, led2On = false;  // Whether LEDN is on
 uint16_t  vp1 = 0xACAC, vp2 = 0xACAC;  // Photodioudes sensing: some stable initial value, which is unlikely to occur
+uint16_t camTrigCycle = 200;  // Camera triggering cycle in ms
 
 //! @brief Report LED Strips State Change to UART (Serial Port) and via the builtin LED
 //! 
@@ -147,12 +148,23 @@ void serialEvent() {
   //assert(Serial.available() == 2 && "2 bytes are expected: ledStripId, intensity");
   if(Serial.available() < 2)
     return;
-  uint8_t  ledStripIdMask = 0;  // 255
+  // First byte defines the command, where high 4 bits define the control type.
+  uint8_t  ctlCmd = 0;  // 255
   // while(!Serial.available())
   //   delay(100);  // Wait 100 ms
-  Serial.read(&ledStripIdMask, sizeof ledStripIdMask);
-  uint8_t intensity = -1;  // 255
-  Serial.read(&intensity, sizeof intensity);
+  Serial.read(&ctlCmd, sizeof ctlCmd);
+  uint8_t cmdVal = -1;  // 255
+  Serial.read(&cmdVal, sizeof cmdVal);
+#ifdef BOARD_MASTER
+  if(ctlCmd & 0x80) {
+    camTrigCycle = cmdVal + (uint16_t(ctlCmd & 0x7F) << 8);
+    Serial.printf("Updated camTrigCycle: %d ms\r\n", camTrigCycle);
+    return;
+  }
+#endif
+
+  uint8_t &ledStripIdMask = ctlCmd;  // 255
+  uint8_t &intensity = cmdVal;  // 255
 
   // Adjust LED strips lighting intensity
   // Note: for the intensity 0 some signal is still present on the DAC, so the lighting should be turned of by the trigger signal
@@ -325,15 +337,16 @@ void loop()
   )) {
     delay(10); // Wait 10 msec = 100 fps
 
-#ifdef BOARD_MASTER  
+#ifdef BOARD_MASTER
+     // Emit triggering event each camTrigCycle ms
     ulong tcur = millis();
     const ulong dur = 1;  // Duration of the grabber TTL2 signal: 0-1 ms
-    if(tcur - tstamp >= 30) {  // ~ 33 fps;  25 fps = 1/25 = 40 ms
+    if(tcur - tstamp >= (ulong)camTrigCycle) {  // ~ 33 fps;  25 fps = 1/25 = 40 ms
       digitalWrite(GTL2, HIGH);
       delay(dur);  // Delay 1 or 0 ms, which is the duration of the signal
       digitalWrite(GTL2, LOW);
       tstamp = tcur + dur;
-    }  
+    }
 #endif
   }
 

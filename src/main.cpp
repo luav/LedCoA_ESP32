@@ -7,9 +7,9 @@
 // These definitions should be adjusted before the compilation
 
 // ATTENTION: BOARD_MASTER should be commented when compiling for the slave
-#define BOARD_MASTER
+// #define BOARD_MASTER
 
-constexpr bool  dbgBlinking = true;  // Blink with the builtin LED for the debugging purposes, which significantly delays the execution cycle
+constexpr bool  dbgBlinking = false;  // Blink with the builtin LED for the debugging purposes, which significantly delays the execution cycle
 constexpr bool  prompting = true;  // Prompting the user input and tracing the command execution to the serial port, which slightly delays the execution cycle. Enabled only on logging level >= info
 //////////////////////////////////////////////////////////////
 
@@ -29,13 +29,13 @@ enum I2C_PINS: uint8_t {
 };
 
 // Note: the grabber does not initiate communication with the ESP32 boards, it only receives TTL1/2 signals
-// //! Digital input pins from cameras
-// enum CAM_PINS: uint8_t {
-// 	CAM1 = A13,  // P15
-// 	CAM2 = A14,  // P13
-// 	// CAM3 = A15,  // P12
-// 	// CAM4 = A16,  // P14
-// };
+// //! Digital input pins from camerashttps://store.steampowered.com/bundle/6048/?snr=1_2300_4__100702_4
+enum CAM_PINS: uint8_t {
+	CAM1 = A13,  // P15
+	CAM2 = A14,  // P13
+	// CAM3 = A15,  // P12
+	// CAM4 = A16,  // P14
+};
 
 //! Digital Trigger Pulse for the lighting strip activation
 enum LED_PINS: uint8_t {
@@ -65,7 +65,7 @@ enum LOG_LEV: uint8_t {
 	DBG
 };
 
-LOG_LEV  logLev = INFO;
+LOG_LEV  logLev = INF;
 
 
 uint16_t  dbgLedCycle = 1000;  // In ms for blinking
@@ -128,7 +128,7 @@ void log(bool nonblocking, bool provenance, LOG_LEV lev, const char* msg, ...)
 #else
 			'S'
 #endif
-			levStr, tcur, __LINE__);
+			, levStr, tcur, __LINE__);
 		msgLen = strlen(buf);
 		if(serCap <= msgLen) {  // This is only the message prefix without the body
 			if(nonblocking)
@@ -209,7 +209,7 @@ void reportLedState(uint8_t ledStripIdMask, uint8_t intensity, bool wire)
 
 //! @brief Set the required intensity for the DAC/LedPin, eliminating the residual lighting
 //! 
-//! @param dac  - target DAC
+//! @param dac  - target DAC PIN
 //! @param uint8_t  - LED intensity
 void setIntensity(uint8_t dac, uint8_t intensity) {
 	LED_PINS ledPin = dac == DAC1 ? LED1 : LED2;
@@ -231,15 +231,26 @@ void setIntensity(uint8_t dac, uint8_t intensity) {
 //! @brief Syncronization receiver callback
 //! 
 //! @param nbytes  - the number of bytes to be received
-void getSyncData(int nbytes)
+void onWireReceive(int nbytes)
 {
-	if(prompting)
-		Serial.println("getSyncData() Slave");
+	if(prompting && Serial)
+		Serial.println("onWireReceive() Slave");
 	// assert(nbytes == 2 && "2 bytes are expected: ledStripId, intensity");
-	if(Wire.available() < 2)
+
+	// assert(Wire.available() >= nbytes);
+	if(nbytes != 2) {
+		if(Serial)
+			Serial.printf("WARNING: Omitting an unexpected command of the length: %d\r\n", nbytes);
+		// Fetch all bytes, reseting the buffer to omit unexpected commands
+		while(nbytes-- && Wire.read() != -1);
 		return;
+	}
+
+	// if(Wire.available() < 2)
+	// 	return;
+
 // #ifdef BOARD_MASTER
-//   Serial.println("getSyncData() Master");
+//   Serial.println("onWireReceive() Master");
 //   const uint8_t ledStripIdMask = Wire.read();
 //     //const bool intencifyAnailable = Wire.available() >= 1;
 //   const uint8_t intensity = Wire.read();
@@ -249,16 +260,16 @@ void getSyncData(int nbytes)
 	const uint8_t intensity = Wire.read();
 // #endif  // BOARD_MASTER
 
-	if(!(0b1100 & ledStripIdMask)) {
-		if(prompting && Serial.availableForWrite())
-			Serial.printf("WARNING: The led id mask is not controllable by the slave board: %#X\r\n", ledStripIdMask);
+	if(!(0b11 & ledStripIdMask)) {
+		if(prompting && Serial)
+			Serial.printf("WARNING: invalid LED mask: %#X\r\n", ledStripIdMask);
 		return;
 	}
 
 	// Adjust LED strips lighting intensity
-	if(0b0100 & ledStripIdMask)
+	if(0b01 & ledStripIdMask)
 		setIntensity(DAC1, intensity);  // 255= 3.3V 128=1.65V
-	if(0b1000 & ledStripIdMask)
+	if(0b10 & ledStripIdMask)
 		setIntensity(DAC2, intensity);  // 255= 3.3V 128=1.65V
 
 	if(prompting) {
@@ -267,13 +278,170 @@ void getSyncData(int nbytes)
 	}
 }
 
+void onWireReceiveTest(int len) {
+	if(!Serial) {
+		while(Wire.available() && len--)
+			Wire.read();
+		return;
+	}
+
+    if(Serial.availableForWrite())
+	    Serial.printf("%s onReceive[%d]: ", boardRole(), len);
+	// assert(Wire.available() >= len);
+	while(Wire.available() && len--) {
+        uint8_t  v = Wire.read();
+        if(Serial.availableForWrite())
+		    Serial.printf("%#X ", v);
+		// Serial.write(Wire.read());
+	}
+    if(Serial.availableForWrite())
+		Serial.println();
+	else Serial.println('>');  // Mark missed output
+}
+
+
+// // Async Execution =====================================================================
+
+// #include <memory>
+// #include <list>
+// #include "esp_timer.h"
+// using std::unique_ptr;
+// using std::list;  // Or set
+
+// class Executor {
+// protected:
+// 	// Abstract command classes ------------------------------------------------------
+// 	class Command {
+// 	protected:
+// 		// const uint64_t m_tDuration;  // Target duration of the single execution of the command
+// 		uint64_t m_tStart;  // Time of the first start of the command, micro sec: 0 means the command is completed, -1 means the command has not been started
+// 		uint64_t m_tRestart;  // Time of the last start of the command, micro sec (10^-6 sec)
+// 		// bool m_isCyclic;  // A cyclic command, which is repeated continuously
+// 		// bool m_isActive;  // Used to activate postponed commands
+// 	public:
+// 		Command(bool isCyclic, uint64_t tStart=-1)  // bool isCyclic, bool isActive=1
+// 			: m_tStart(tStart), m_tRestart(isCyclic ? tStart : -1)  {}  // , m_isCyclic(isCyclic), m_isActive(isActive)
+
+// 		bool isCyclic() noexcept  { return m_tRestart != -1; }
+// 		// virtual bool isCyclic() noexcept  { return false; }
+
+// 		// virtual void execute(Executor& exc, ICommandPtr)=0;
+// 		// void onCompletion(Executor* pExec, ICommand* pICmd=)
+
+// 		//! @brief Execute the command
+// 		//! @note This function should be called at least twice of each command: on start and on completion/finalization.
+// 		//! @return Time duration before calling the command completion (step for a multi-command) or restart (for a cyclic command)
+// 		virtual uint64_t restart();
+
+// 		// //! @brief Execute the command
+// 		// //! @return Time duration before calling the command (step for multi-command) completion
+// 		// virtual uint64_t  complete();
+// 	};
+	
+// 	// class CyclicCommand: public Command {
+// 	// protected:
+// 	// 	uint16_t m_tStartInitial;
+// 	// public:
+// 	// 	CyclicCommand(): Command(), m_tStartInitial(m_tStart)  {}
+// 	// 	virtual bool isCyclic() noexcept override final  { return true; }
+// 	//
+// 	// 	// virtual void execute()=0 override;
+// 	// };
+
+// 	class MultiCommand: public Command {
+// 	protected:
+// 		uint16_t m_step;  // Execution step of the command
+// 	public:
+// 		MultiCommand(bool isCyclic): Command(isCyclic), m_step(0)  {}
+
+// 		// virtual void execute()=0 override;
+// 	};
+
+// 	// Concrete command classes ------------------------------------------------------
+// 	class FlatVoltageCommand: public Command {
+// 	public:
+// 		FlatVoltageCommand(uint8_t dacMask, uint8_t intensity, bool isCyclic=0): Command(isCyclic, esp_timer_get_time())  // Note: Arduino micros() returns unsigned long, which is 32 bit in ESP32, however esp_timer_get_time() returns uint64_t
+// 		{
+// 			if(dacMask & 0b01)
+// 				setIntensity(DAC1, intensity);
+// 			if(dacMask & 0b10)
+// 				setIntensity(DAC2, intensity);
+// 		}
+
+// 		uint64_t restart() override final
+// 		{
+// 			return 0;
+// 		}
+// 	};
+
+// 	class ValidateVoltageMultiCommand: public MultiCommand {
+// 	public:
+// 		ValidateVoltageMultiCommand(bool isCyclic=true): MultiCommand(isCyclic) {}
+
+// 		uint64_t restart() override final;
+// 	};
+
+// public:
+// 	using CommandPtr = unique_ptr<Command>;
+// 	using Commands = list<CommandPtr>;
+// 	using ICommandPtr = Commands::iterator;
+
+// 	// ICommandPtr schedule(CommandPtr cmd);
+// 	//! Parse a binary command, creating the actual one in the target board (Master or Slave) if the specified code corresponds to the actual command
+// 	bool parse(uint16_t bcmd);
+// 	// void executePostponed();  //! Execute postponed commands
+// 	bool stopCyclicCmds();  //! Stops the execution of all cyclic commands
+// 	// uint64_t [re]sync(uint64_t tRestart);
+// private:
+// 	Commands  m_cmds;  //! Scheduled commands
+// 	Commands  m_postpCmds;  //! Postponed commands
+// };
+
+// bool Executor::parse(uint16_t bcmd)
+// {
+// 	return true;
+// }
+
+
+
+// Accessory functions for Arduino callbacks ====================================================
+//! @brief Scan for the connected I2C devices
+void i2cClientScan()
+{
+	if(!Serial)
+		return;
+	for(uint8_t addr = 1; addr <= 127; addr++ ) {
+		Wire.beginTransmission(addr);
+		const uint8_t err = Wire.endTransmission();
+		if(Serial.availableForWrite()) {
+			if (err == 0)
+				Serial.printf("I2C device found at %#X\r\n", addr);
+			else if (err != 2)
+				Serial.printf("Error at the I2C device %#X: %#X\r\n", addr, err);
+		}
+	}
+}
+
+// Implementation of Arduino callbacks =========================================================
+
+// Note: the size the Serial buffer in Arduino is 64
+// Serial.availableForWrite() returns the number of bytes available to write without being blocked
+// I2C_BUFFER_LENGTH = 128 in ESP32
+
 //! @brief Handle control signals from the serial port
 //! Note: serialEvent() is called automatically between each loop() call when a new data comes in the hardware serial RX
 void serialEvent() {
 	// TODO: ensure that this is a master
 	//assert(Serial.available() == 2 && "2 bytes are expected: ledStripId, intensity");
-	if(Serial.available() < 2)
+	unsigned  nbytes = Serial.available();
+
+	if(nbytes != 2) {
+		Serial.printf("WARNING: Omitting an unexpected command of the length: %d\r\n", nbytes);
+		// Fetch all bytes, reseting the buffer to omit unexpected commands
+		while(nbytes-- && Serial.read() != -1);
 		return;
+	}
+
 	// First byte defines the command, where high 4 bits define the control type.
 	uint8_t  ctlCmd = 0;  // 255
 	// while(!Serial.available())
@@ -300,9 +468,11 @@ void serialEvent() {
 	if(0b0010 & ledStripIdMask)
 		setIntensity(DAC2, intensity);
 
-	const uint8_t  idMaskCut = 0b1100 & ledStripIdMask;
+	uint8_t  idMaskCut = 0b1100 & ledStripIdMask;
 #ifdef BOARD_MASTER
 	if(idMaskCut) {
+		idMaskCut >>= 2;
+
 		// WirePacker packer;
 		// packer.write(idMaskCut);
 		// packer.write(intensity);
@@ -324,7 +494,7 @@ void serialEvent() {
 // 4: other error.
 // 5: timeout
 
-		Serial.printf("Transferring to wire %#X (idMask2: %#X, intensity: %#X), errCode: %#X\r\n", I2C_SLAVE_ADDR, idMaskCut, intensity, err);
+		Serial.printf("Transferring to wire %#X (idMask2: %#X, intensity: %#X = %.2f V), errCode: %#X\r\n", I2C_SLAVE_ADDR, idMaskCut, intensity, intensity * 3.3f / 255, err);
 	}
 #endif  // BOARD_MASTER
 
@@ -332,31 +502,6 @@ void serialEvent() {
 	if(idMaskLoc)
 		reportLedState(idMaskLoc, intensity, false);
 	promted = false;
-}
-
-
-//! @brief Scan for the connected I2C devices
-void i2cClientScan()
-{
-	for(uint8_t addr = 1; addr <= 127; addr++ ) {
-		Wire.beginTransmission(addr);
-		const uint8_t err = Wire.endTransmission();
-		if (err == 0)
-			Serial.printf("I2C device found at %#X\r\n", addr);
-		else if (err != 2)
-			Serial.printf("Error at the I2C device %#X: %#X\r\n", addr, err);
-	}
-}
-
-void onWireReceive(int len) {
-	if(!Serial)
-		return;
-	Serial.printf("%s onReceive[%d]: ", boardRole(), len);
-	while(Wire.available()) {
-		Serial.printf("%#X ", Wire.read());
-		// Serial.write(Wire.read());
-	}
-	Serial.println();
 }
 
 void setup()
@@ -376,21 +521,21 @@ void setup()
 	pinMode(PSD1, INPUT);    // LED strip activation
 	pinMode(PSD2, INPUT);    // LED strip activation
 
-	// Setup input pins from the egrabber
-	pinMode(CAM1, INPUT);
-	pinMode(CAM2, INPUT);
-	// pinMode(CAM3, INPUT);
-	// pinMode(CAM4, INPUT);
+	// // Setup input pins from the egrabber
+	// pinMode(CAM1, INPUT);
+	// pinMode(CAM2, INPUT);
+	// // pinMode(CAM3, INPUT);
+	// // pinMode(CAM4, INPUT);
 
 	// Serial monitor setup
 	Serial.begin(115200);
 	Serial.setDebugOutput(true);  // Required on ESP to enable output from printf() function
 
 	// I2C Setup
-	delay(3000);  // Required to delay initialization and check it on reflashing
 
 	// // Dynamic identification of the boar role (master/slave), initializing as a slave if slaves are not present
 	// // Start as a master and check whether a slave is connected, becoming the slave if necessary
+	// delay(3000);  // Required to delay initialization and check it on reflashing
 	// bool success = Wire.begin(I2C_SDA, I2C_SCL, I2C_FREQ_HZ); // Join i2c bus (address optional for master)
 	// if(success) {
 	//   Serial.println("I2C Master initialized");
@@ -433,7 +578,7 @@ void setup()
 	//   Serial.println("Starting I2C slave initialization");
 	//   success = Wire.begin(I2C_SLAVE_ADDR, I2C_SDA, I2C_SCL, I2C_FREQ_HZ);
 	//   if (success) {
-	//       // Wire.onReceive(getSyncData); // Register the Wire data receipt callback before starting the slave
+	//       // Wire.onReceive(onWireReceiveTest); // Register the Wire data receipt test callback before starting the slave
 	//       Wire.onReceive(onWireReceive);  // Register the Wire data receipt callback before starting the slave
 	//       Serial.printf("I2C Slave started at %#X\r\n", I2C_SLAVE_ADDR);
 	//   } else Serial.println("I2C slave init failed");
@@ -460,7 +605,7 @@ void setup()
 	// Setup Grabber communication signals
 	pinMode(GTL2, OUTPUT);    // Grabber TTL 2
 #else
-		// Wire.onReceive(getSyncData); // Register the Wire data receipt callback before starting the slave
+		// Wire.onReceive(onWireReceiveTest);  // Register the Wire data receipt test callback before starting the slave
 		Wire.onReceive(onWireReceive);  // Register the Wire data receipt callback before starting the slave
 		bool success = Wire.begin(I2C_SLAVE_ADDR, I2C_SDA, I2C_SCL, I2C_FREQ_HZ);
 		if (!success) {
@@ -468,25 +613,23 @@ void setup()
 		} else Serial.printf("I2C Slave started at %#X\r\n", I2C_SLAVE_ADDR);
 #endif  // BOARD_MASTER
 
-	// Perform lighting strips activation
-	delay(1); // Wait 1 ms
-	// Set max brightness for the LED strips
-	dacWrite(DAC1, 255);  // 255= 3.3V 128=1.65V
-	dacWrite(DAC2, 255);
-	// Perform lighting strips activation
-	digitalWrite(LED1, HIGH);
-	led1On = true;
-	digitalWrite(LED2, HIGH);
-	led2On = true;
+	// // Perform lighting strips activation
+	// delay(1); // Wait 1 ms
+	// // Set max brightness for the LED strips
+	// dacWrite(DAC1, 255);  // 255= 3.3V 128=1.65V
+	// dacWrite(DAC2, 255);
+	// // Perform lighting strips activation
+	// digitalWrite(LED1, HIGH);
+	// led1On = true;
+	// digitalWrite(LED2, HIGH);
+	// led2On = true;
 	// Activate builtin LED
-	if(dbgBlinking)
-		digitalWrite(LED_BUILTIN, HIGH);
+	// if(dbgBlinking)  // Note: We consider dbgBlinking only when delays envolved
+	digitalWrite(LED_BUILTIN, HIGH);
 
-	// Prompt user input
-	Serial.println("\r\nInput the control command (<ledstrip_idmask: uint4_t> <intensity: uint8_t>");
-
-	Serial.println("\r\nInput the lighting intensity (<ledstrip_id: uint2_t> <intensity: uint8_t>");
-	promted = true;  // User
+	// // Prompt user input
+	// Serial.println("\r\nInput the control command (<ledstrip_idmask: uint4_t> <intensity: uint8_t>");
+	// promted = true;  // User
 }
 
 constexpr uint16_t  lightSensCycle = 2000;  // Light sensing output trigger, ms
@@ -500,28 +643,124 @@ uint16_t  lsTime = 0;  // Light sensing counter to reduce output cluttering
 //   delay(1000); // Wait 1 sec
 // }
 
+
+void validateBrightness(uint16_t& step, uint8_t dacMask, uint8_t dtV=2) {
+	if(Serial)
+		Serial.printf("Validating brightness, changing the voltage each dt=%d sec on DACs mask=%#X\r\n", dacMask, dtV);
+	uint8_t intensity = 0;
+
+	switch (step) {
+	case 0:
+		// Set max brightness for the LED strips
+		intensity = 255;
+		dacWrite(DAC1, intensity);  // 255= 3.3V 128=1.65V
+		dacWrite(DAC2, intensity);
+		// Perform lighting strips activation
+		digitalWrite(LED1, HIGH);
+		led1On = true;
+		digitalWrite(LED2, HIGH);
+		led2On = true;
+		// Deactivate builtin LED
+		if(dbgBlinking)
+			digitalWrite(LED_BUILTIN, HIGH);
+		++step;
+		break;
+	
+	case 1:
+		// Set max brightness for the LED strips
+		intensity = 127;
+		dacWrite(DAC1, intensity);  // 255= 3.3V 128=1.65V
+		dacWrite(DAC2, intensity);
+		++step;
+		break;
+	
+	case 2:
+		// Set max brightness for the LED strips
+		intensity = 1;
+		dacWrite(DAC1, intensity);  // 255= 3.3V 128=1.65V
+		dacWrite(DAC2, intensity);
+		++step;
+		break;
+
+	case 3:
+		// Set max brightness for the LED strips
+		intensity = 0;
+		dacWrite(DAC1, intensity);  // 255= 3.3V 128=1.65V
+		dacWrite(DAC2, intensity);
+		++step;
+		break;
+
+	case 4:
+		// Set max brightness for the LED strips
+		intensity = 0;
+		dacWrite(DAC1, intensity);  // 255= 3.3V 128=1.65V
+		dacWrite(DAC2, intensity);
+		// Perform lighting strips activation
+		digitalWrite(LED1, LOW);
+		led1On = false;
+		digitalWrite(LED2, LOW);
+		led2On = false;
+		++step;
+		break;
+
+	default:
+		// Deactivate builtin LED
+		if(dbgBlinking)
+			digitalWrite(LED_BUILTIN, LOW);
+		break;
+	}
+
+	// Reset max step
+	if(step >= 5) {
+		step = 0;
+		// Deactivate builtin LED
+		if(dbgBlinking)
+			digitalWrite(LED_BUILTIN, LOW);
+		if(Serial)
+			Serial.println("");
+	}
+
+	// Report the update
+	if(Serial)
+		Serial.printf("Brightnes on both DACs: %#X = %.2f V, step: %d\r\n", intensity, intensity * 3.3f / 255, step);
+}
+
+
 bool sent = false;
+// uint16_t step = 0;  // Validation step
 void loop()
 {
-	// delay(1); // Wait 1 ms
-	delayMicroseconds(100);  // 0.1 ms ~ half of a delay of the control signal transfer
+	delay(1); // Wait 1 ms
+	// delayMicroseconds(100);  // 0.1 ms ~ half of a delay of the control signal transfer
 
-	if(!sent) {
-		delay(3000);
-		// Note: beginTransmission works only for the Master
-		if(isMaster) {
-			Wire.beginTransmission(I2C_SLAVE_ADDR); // transmit to device I2C_SLAVE_ADDR
-			// while (packer.available())    // write every packet byte
-			//   Wire.write(packer.read());
-			Wire.write("hi");
-			// Wire.write(idMaskCut);     // sends one byte
-			// Wire.write(intensity);     // sends one byte  
-			const uint8_t err = Wire.endTransmission();    // stop transmitting
-			if(err) {
-				Serial.printf("Wire transfer from %s to %#X failed: %d\r\n", boardRole(), I2C_SLAVE_ADDR, err);
-			} else sent = true;
-		} else Wire.slaveWrite((uint8_t *)"hi", 2);
-	}
+
+	// uint8_t dtV = 5;  // Voltage update dt in sec
+	// uint8_t dacMask = 0x3;  // Mask of the target DACs
+	// // static uint16_t step = 0;  // Validation step
+
+	// validateBrightness(step, dacMask, dtV);
+	// delay(dtV * 1000);
+	// if(!step)
+	// 	delay(dtV * 1000);
+
+
+	// // Manual validation of the master-slave communication
+	// if(!sent) {
+	// 	delay(3000);
+	// 	// Note: beginTransmission works only for the Master
+	// 	if(isMaster) {
+	// 		Wire.beginTransmission(I2C_SLAVE_ADDR); // transmit to device I2C_SLAVE_ADDR
+	// 		// while (packer.available())    // write every packet byte
+	// 		//   Wire.write(packer.read());
+	// 		Wire.write("hi");
+	// 		// Wire.write(idMaskCut);     // sends one byte
+	// 		// Wire.write(intensity);     // sends one byte  
+	// 		const uint8_t err = Wire.endTransmission();    // stop transmitting
+	// 		if(err) {
+	// 			Serial.printf("Wire transfer from %s to %#X failed: %d\r\n", boardRole(), I2C_SLAVE_ADDR, err);
+	// 		} else sent = true;
+	// 	} else Wire.slaveWrite((uint8_t *)"hi", 2);
+	// }
 
 // 0: success.
 // 1: data too long to fit in transmit buffer.
@@ -552,7 +791,7 @@ void loop()
 // //   Wire.update();  // Required by ESP32 I2C Slave library
 // //   // size_t  wireBytes = Wire.available();
 // //   // if(wireBytes)
-// //   //   getSyncData(wireBytes);
+// //   //   onWireReceive(wireBytes);
 // // #endif
 
 //   // Sense photodiodes
@@ -572,11 +811,11 @@ void loop()
 //   if(lsCtr >= lsTrig)
 //     lsCtr = 0;
 
-//   // Propmp user input
-//   if(prompting && !promted && Serial.availableForWrite()) {
-//     Serial.println("\r\nInput the lighting intensity (<ledstrip_id: uint2_t> <intensity: uint8_t>");
-//     promted = true;
-//   }
+  // Propmp user input
+  if(prompting && !promted && Serial.availableForWrite()) {
+    Serial.println("\r\nInput the lighting intensity (<ledstrip_id: uint2_t> <intensity: uint8_t>");
+    promted = true;
+  }
 
 //   while(!(Serial.available()
 // // #ifndef BOARD_MASTER

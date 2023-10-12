@@ -64,19 +64,21 @@ Input the control command (<ctl: uint8_t> <value: uint8_t>)
 
 Open another terminal to send control signals (see [Control commands](#control-commands)) to the master board:
 ```
-echo -ne "\x47\xAA" > /dev/ttyUSB0
+echo -ne "\x7\xAA" > /dev/ttyUSB0
 ```
-This signal immediately sets brightness (`0x40`) of the 3 first LED strips (`0x07`) to the intensity value 67% (`0xAA` = 170 of 255). The binary representation of this command is
+This signal immediately sets brightness of 3 LED strips (`0x07`) to the intensity value 67% (`0xAA` = 170 of 255 = 61.6% = ~2.03V of 0.08..3.3V). The binary representation of this command is
 ```txt
-  1st byte 0x47     2nd byte 0xAA
-|0|1|0|0|0|1|1|1| |1|0|1|0|1|0|1|0|
+  1st byte 0x07     2nd byte 0xAA
+|0|0|0|0|0|1|1|1| |1|0|1|0|1|0|1|0|
  7 6 5 4 3 2 1 0   7 6 5 4 3 2 1 0 
 ```
 see the [Command Specification](#command-specification) section for details.
 
-Then you should see in the first terminal via the minicom:
+Then you should see in the first terminal via the minicom that  
+- 01=0x1 mask (0x07 >> 2 = 0x01 = 01b) with 0xAA value is transferred to the Slave and
+- 0x03 (0x07 & 0x3 = 0x3 = 011b) with 0xAA value is applied on the Master ESP32 board:
 ```
-Transferring to wire (idMask2, intensity): 0X4 0XAA
+Transferring to wire (idMask2, intensity): 0X1 0XAA
 LED strips id (mask): 0X3
 Set intensity: 0XAA
 ```
@@ -137,8 +139,7 @@ Command bits: |7|6|5|4|3|2|1|0| |7|6|5|4|3|2|1|0|
         </tr>
         <tr>
             <td>Notation</td>
-            <td>-</td>
-            <td colspan=3>-</td>
+            <td colspan=4>-</td>
             <td colspan=4>mask</td>
             <!-- <td></td> -->
             <td colspan=8>value</td>

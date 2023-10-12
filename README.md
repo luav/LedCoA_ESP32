@@ -178,18 +178,18 @@ Configure the opened connection and save it as a default configuration: press `C
 
 D1 Mini boards synchronization can be performed either by I2C (which are IO22=SCL0 and IO21=SDA0 by default; it might be necessary to wire also the grounds of the boards to get I2C work), or by one of the available UARTs (Serial ports), or by any custom 3 pins (e.g., IO33,  IO27, IO32).  
 ### #1 D1 Mini ESP32 WeMos (Master)
-**2 internal DACs (IO25, IO26) for Analog O/P:**
+**2 internal DACs (IO25, IO26) for Analog O/P:**  
 IO25 (Master DAC1)  <-  1. O/P (Output)  Analog 0…3.3V (0.08 .. 3.3 V)  Channel Top IR Strip (L1)  
 IO26 (Master DAC2)  <-  2. O/P  Analog 0…3.3V (0.08 .. 3.3 V)  Channel Middle IR Strip (L2S)  
-**O/P  Digital Trigger Pulse OFF is performed from GPIO:**
+**O/P  Digital Trigger Pulse OFF is performed from GPIO:**  
 IO16 (might be updated to IO32)  <- 5. O/P  Digital Trigger Pulse OFF:  0V  Pulse ON:  3.3V  Channel Top Strip L1  
 IO17 (might be updated to IO27)  <- 8. O/P  Digital Trigger Pulse OFF:  0V  Pulse ON:  3.3V  Channel Bottom Strip L3U  
-**I/P  Analog 0…3.3V:**
+**I/P  Analog 0…3.3V:**  
 IO34 (PSD1 = VDET_1 = ADC1_6 = Arduino's ADC0)  <- 9. I/P (Input)  Analog 0…3.3V  FB Photo diode Channel Top Strip L1  
 IO35 (PSD1 = VDET_2 = ADC1_7 = Arduino's ADC1)  <- 12. I/P  Analog 0…3.3V  FB Photo diode Channel Bottom Strip L3U  
 Alternatively, IO27 (ADC2_7) can be used to read data from 2 distinct ADCs in parallel (ADC1_6 and ADC2_7 ). However, it will load CPU because only ADC1 supports DMA.  
 
-**Internal communication:**
+**Internal communication:**  
 IO21 - I2C_SDA IO/P (Input-Output) Data  
 IO22 - I2C_SCL IO/P Clock  
 GND - Mutual ground wiring for all I2C devices is required  
@@ -202,18 +202,18 @@ VCC - Power (5V) wiring is required for each serial device
 IO33 - GTL2 O/P firmware-yielding camera's grabber trigger pulse (0..5V, where 2.5..5V is HIGH)  
 
 ### #2 D1 Mini ESP32 WeMos (Slave)
-**2 internal DACs (IO25, IO26) for Analog O/P:**
+**2 internal DACs (IO25, IO26) for Analog O/P:**  
 IO25 (Slave DAC1)  <-  3. O/P  Analog 0…3.3V (0.08 .. 3.3 V)  Channel Bottom Fluo Strip (L3U)  
 IO26 (Slave DAC2)  <-  4. O/P  Analog 0…3.3V (0.08 .. 3.3 V)  Channel Middle Fluo Strip (L3S)  
-**O/P  Digital Trigger Pulse OFF is performed from GPIO:**
+**O/P  Digital Trigger Pulse OFF is performed from GPIO:**  
 IO16 (updating to IO32)  <- 6. O/P  Digital Trigger Pulse OFF:  0V  Pulse ON:  3.3V  Channel Middle Strip L2S  
 IO17 (updating to IO27)  <- 7. O/P  Digital Trigger Pulse OFF:  0V  Pulse ON:  3.3V  Channel Middle Strip L3S  
-**I/P  Analog 0…3.3V:**
+**I/P  Analog 0…3.3V:**  
 IO34 (VDET_1 = ADC1_6 = Arduino's ADC0)  <- 10. I/P  Analog 0…3.3V  FB Photo diode Channel Middle Strip L2S  
 IO35 (VDET_2 = ADC1_7 = Arduino's ADC1)  <- 11. I/P  Analog 0…3.3V  FB Photo diode Channel Middle Strip L3S  
 Alternatively, IO27 (ADC2_7) can be used to read data from 2 distinct ADCs in parallel (ADC1_6 and ADC2_7 ). However, it will load CPU because only ADC1 supports DMA.  
 
-**Internal communication:**
+**Internal communication:**  
 IO21 - I2C_SDA IO/P (Input-Output) Data  
 IO22 - I2C_SCL IO/P Clock  
 GND - Mutual ground wiring for all I2C devices is required  

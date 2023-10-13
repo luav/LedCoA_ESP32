@@ -1,4 +1,4 @@
-Copyright 2021, Artem Lutov <lua@lutan.ch> (Lutov Analytics, Lumais LLC)
+Copyright 2022, Artem Lutov (Lutov Analytics, Lumais LLC), Serhii Oleksenko (Lumais LLC)
 
 License: Apache 2.0.
 Optional commercial support and relicensing are provided by request.

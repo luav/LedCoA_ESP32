@@ -370,8 +370,9 @@ IO17 (might be updated to IO27)  <- 8. O/P  Digital Trigger Pulse OFF:  0V  Puls
 **I/P  Analog 0…3.3V:**  
 IO34 (PSD1 = VDET_1 = ADC1_6 = Arduino's ADC0)  <- 9. I/P (Input)  Analog 0…3.3V  FB Photo diode Channel Top IR Strip (L1)  
 IO35 (VDET_2 = ADC1_7 = Arduino's ADC1)  <- 11. I/P  Analog 0…3.3V  FB Photo diode Channel Middle IR Strip (L2S)  
-<!-- Former: IO35 (PSD1 = VDET_2 = ADC1_7 = Arduino's ADC1)  <- 12. I/P  Analog 0…3.3V  FB Photo diode Channel Bottom Strip L3U   -->
 Alternatively, IO27 (ADC2_7) can be used to read data from 2 distinct ADCs in parallel (ADC1_6 and ADC2_7 ). However, it will load CPU because only ADC1 supports DMA.  
+**O/P  Digital Trigger Pulse to the Grabber:**  
+IO33 - GTL2 O/P firmware-yielding camera's grabber trigger pulse (0..5V, where 2.5..5V is HIGH)  
 
 **Internal communication:**  
 IO21 - I2C_SDA IO/P (Input-Output) Data  
@@ -382,8 +383,6 @@ IO1 - UART0 TXD Serial Port Transmit Data
 IO3 - UART0 RXD Serial Port Receive Data  
 GND - Ground wiring is required for each serial device  
 VCC - Power (5V) wiring is required for each serial device  
-
-IO33 - GTL2 O/P firmware-yielding camera's grabber trigger pulse (0..5V, where 2.5..5V is HIGH)  
 
 ### \#2 D1 Mini ESP32 WeMos (Slave)
 **2 internal DACs (IO25, IO26) for Analog O/P:**  
@@ -395,9 +394,10 @@ IO17 (updating to IO27)  <- 7. O/P  Digital Trigger Pulse OFF:  0V  Pulse ON:  3
 **I/P  Analog 0…3.3V:**  
 IO34 (PSD1 = VDET_1 = ADC1_6 = Arduino's ADC0)  <- 9. I/P (Input)  Analog 0…3.3V  FB Photo diode Channel Bottom Fluo Strip (L3U)  
 IO35 (VDET_2 = ADC1_7 = Arduino's ADC1)  <- 11. I/P  Analog 0…3.3V  FB Photo diode Channel Middle Fluo Strip (L3S)  
-<!-- Former: IO34 (VDET_1 = ADC1_6 = Arduino's ADC0)  <- 10. I/P  Analog 0…3.3V  FB Photo diode Channel Middle Strip L2S  
-IO35 (VDET_2 = ADC1_7 = Arduino's ADC1)  <- 11. I/P  Analog 0…3.3V  FB Photo diode Channel Middle Strip L3S   -->
 Alternatively, IO27 (ADC2_7) can be used to read data from 2 distinct ADCs in parallel (ADC1_6 and ADC2_7 ). However, it will load CPU because only ADC1 supports DMA.  
+**O/P  Digital Trigger Pulse to the Grabber:**  
+IO33 - GTL1 O/P firmware-yielding camera's grabber trigger pulse (0..5V, where 2.5..5V is HIGH).  
+> GTL1 is shared with the Lighting Box, being disabled for the firmware by default.
 
 **Internal communication:**  
 IO21 - I2C_SDA IO/P (Input-Output) Data  
@@ -408,6 +408,3 @@ IO1 - UART0 TXD Serial Port Transmit Data
 IO3 - UART0 RXD Serial Port Receive Data  
 GND - Ground wiring is required for each serial device  
 VCC - Power (5V) wiring is required for each serial device  
-
-IO33 - GTL1 O/P firmware-yielding camera's grabber trigger pulse (0..5V, where 2.5..5V is HIGH).  
-> GTL1 is shared with the Lighting Box, being disabled for the firmware by default.

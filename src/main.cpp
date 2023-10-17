@@ -300,110 +300,6 @@ void onWireReceiveTest(int len) {
 }
 
 
-// // Async Execution =====================================================================
-
-// #include <memory>
-// #include <list>
-// #include "esp_timer.h"
-// using std::unique_ptr;
-// using std::list;  // Or set
-
-// class Executor {
-// protected:
-// 	// Abstract command classes ------------------------------------------------------
-// 	class Command {
-// 	protected:
-// 		// const uint64_t m_tDuration;  // Target duration of the single execution of the command
-// 		uint64_t m_tStart;  // Time of the first start of the command, micro sec: 0 means the command is completed, -1 means the command has not been started
-// 		uint64_t m_tRestart;  // Time of the last start of the command, micro sec (10^-6 sec)
-// 		// bool m_isCyclic;  // A cyclic command, which is repeated continuously
-// 		// bool m_isActive;  // Used to activate postponed commands
-// 	public:
-// 		Command(bool isCyclic, uint64_t tStart=-1)  // bool isCyclic, bool isActive=1
-// 			: m_tStart(tStart), m_tRestart(isCyclic ? tStart : -1)  {}  // , m_isCyclic(isCyclic), m_isActive(isActive)
-
-// 		bool isCyclic() noexcept  { return m_tRestart != -1; }
-// 		// virtual bool isCyclic() noexcept  { return false; }
-
-// 		// virtual void execute(Executor& exc, ICommandPtr)=0;
-// 		// void onCompletion(Executor* pExec, ICommand* pICmd=)
-
-// 		//! @brief Execute the command
-// 		//! @note This function should be called at least twice of each command: on start and on completion/finalization.
-// 		//! @return Time duration before calling the command completion (step for a multi-command) or restart (for a cyclic command)
-// 		virtual uint64_t restart();
-
-// 		// //! @brief Execute the command
-// 		// //! @return Time duration before calling the command (step for multi-command) completion
-// 		// virtual uint64_t  complete();
-// 	};
-	
-// 	// class CyclicCommand: public Command {
-// 	// protected:
-// 	// 	uint16_t m_tStartInitial;
-// 	// public:
-// 	// 	CyclicCommand(): Command(), m_tStartInitial(m_tStart)  {}
-// 	// 	virtual bool isCyclic() noexcept override final  { return true; }
-// 	//
-// 	// 	// virtual void execute()=0 override;
-// 	// };
-
-// 	class MultiCommand: public Command {
-// 	protected:
-// 		uint16_t m_step;  // Execution step of the command
-// 	public:
-// 		MultiCommand(bool isCyclic): Command(isCyclic), m_step(0)  {}
-
-// 		// virtual void execute()=0 override;
-// 	};
-
-// 	// Concrete command classes ------------------------------------------------------
-// 	class FlatVoltageCommand: public Command {
-// 	public:
-// 		FlatVoltageCommand(uint8_t dacMask, uint8_t intensity, bool isCyclic=0): Command(isCyclic, esp_timer_get_time())  // Note: Arduino micros() returns unsigned long, which is 32 bit in ESP32, however esp_timer_get_time() returns uint64_t
-// 		{
-// 			if(dacMask & 0b01)
-// 				setIntensity(DAC1, intensity);
-// 			if(dacMask & 0b10)
-// 				setIntensity(DAC2, intensity);
-// 		}
-
-// 		uint64_t restart() override final
-// 		{
-// 			return 0;
-// 		}
-// 	};
-
-// 	class ValidateVoltageMultiCommand: public MultiCommand {
-// 	public:
-// 		ValidateVoltageMultiCommand(bool isCyclic=true): MultiCommand(isCyclic) {}
-
-// 		uint64_t restart() override final;
-// 	};
-
-// public:
-// 	using CommandPtr = unique_ptr<Command>;
-// 	using Commands = list<CommandPtr>;
-// 	using ICommandPtr = Commands::iterator;
-
-// 	// ICommandPtr schedule(CommandPtr cmd);
-// 	//! Parse a binary command, creating the actual one in the target board (Master or Slave) if the specified code corresponds to the actual command
-// 	bool parse(uint16_t bcmd);
-// 	// void executePostponed();  //! Execute postponed commands
-// 	bool stopCyclicCmds();  //! Stops the execution of all cyclic commands
-// 	// uint64_t [re]sync(uint64_t tRestart);
-// private:
-// 	Commands  m_cmds;  //! Scheduled commands
-// 	Commands  m_postpCmds;  //! Postponed commands
-// };
-
-// bool Executor::parse(uint16_t bcmd)
-// {
-// 	return true;
-// }
-
-
-
 // Accessory functions for Arduino callbacks ====================================================
 //! @brief Scan for the connected I2C devices
 void i2cClientScan()
@@ -457,17 +353,10 @@ void serialEvent() {
 	}
 #endif
 
-	uint8_t &ledStripIdMask = ctlCmd;  // 255
+	const uint8_t &ledStripIdMask = ctlCmd;  // 255
 	uint8_t &intensity = cmdVal;  // 255
 
-	// Adjust LED strips lighting intensity
-	// Note: for the intensity 0 some signal is still present on the DAC, so the lighting should be turned of by the trigger signal
-	if(0b0001 & ledStripIdMask)
-		setIntensity(DAC1, intensity);
-
-	if(0b0010 & ledStripIdMask)
-		setIntensity(DAC2, intensity);
-
+	// First, transfer to the Slave and then process the command in parallel with the Slave
 	uint8_t  idMaskCut = 0b1100 & ledStripIdMask;
 #ifdef BOARD_MASTER
 	if(idMaskCut) {
@@ -497,6 +386,14 @@ void serialEvent() {
 		Serial.printf("Transferring to wire %#X (idMask2: %#X, intensity: %#X = %.2f V), errCode: %#X\r\n", I2C_SLAVE_ADDR, idMaskCut, intensity, intensity * 3.3f / 255, err);
 	}
 #endif  // BOARD_MASTER
+
+	// Adjust LED strips lighting intensity
+	// Note: for the intensity 0 some signal is still present on the DAC, so the lighting should be turned of by the trigger signal
+	if(0b0001 & ledStripIdMask)
+		setIntensity(DAC1, intensity);
+
+	if(0b0010 & ledStripIdMask)
+		setIntensity(DAC2, intensity);
 
 	const uint8_t  idMaskLoc = 0b11 & ledStripIdMask;
 	if(idMaskLoc)
@@ -726,14 +623,14 @@ void validateBrightness(uint16_t& step, uint8_t dacMask, uint8_t dtV=2) {
 }
 
 
-bool sent = false;
-// uint16_t step = 0;  // Validation step
+// uint16_t step = 0;  // Validation step for the brightness
+// bool sent = false;  // A flag for a single manual validation of I2C communication
 void loop()
 {
 	delay(1); // Wait 1 ms
 	// delayMicroseconds(100);  // 0.1 ms ~ half of a delay of the control signal transfer
 
-
+	// Brightness validation ---
 	// uint8_t dtV = 5;  // Voltage update dt in sec
 	// uint8_t dacMask = 0x3;  // Mask of the target DACs
 	// // static uint16_t step = 0;  // Validation step
@@ -742,6 +639,7 @@ void loop()
 	// delay(dtV * 1000);
 	// if(!step)
 	// 	delay(dtV * 1000);
+	// End Brightness validation ---
 
 
 	// // Manual validation of the master-slave communication
@@ -770,19 +668,6 @@ void loop()
 // 5: timeout
 
 
-//   // TODO: consider master/slave initialization via serial port
-//   static ulong  tstamp = millis();
-
-// #ifndef BOARD_MASTER
-//   delay(20); // Wait 20 ms
-//   ulong  tcur = millis();
-//   if(tcur - tstamp >= 1000) {
-//     tstamp = tcur;
-//     Serial.printf("Listening for the master commands (w av: %d, w1 av: %d)\r\n", Wire.available(), Wire.available());
-//   }
-//   return;
-// #endif  // BOARD_MASTER
-
 // //   // Note: serialEvent() should be called automatically between each loop() call when a new data comes in the hardware serial RX, but that does not happen on ESP32
 // // #ifdef BOARD_MASTER  
 // //   if(Serial.available())
@@ -794,7 +679,7 @@ void loop()
 // //   //   onWireReceive(wireBytes);
 // // #endif
 
-//   // Sense photodiodes
+//   // Sense photodiodes ---
 //   lsTime = 1;
 //   uint16_t vp = analogRead(PSD1);
 //   if(vp != vp1 && Serial.availableForWrite()) {
@@ -810,6 +695,7 @@ void loop()
 //   }
 //   if(lsCtr >= lsTrig)
 //     lsCtr = 0;
+//	// End Sense photodiodes ---
 
   // Propmp user input
   if(prompting && !promted && Serial.availableForWrite()) {
@@ -817,13 +703,14 @@ void loop()
     promted = true;
   }
 
+//   // Emit triggering event each camTrigCycle ms
 //   while(!(Serial.available()
 // // #ifndef BOARD_MASTER
 // //     || Wire.available()
 // // #endif
 //   )) {
 //     delay(10); // Wait 10 msec = 100 fps
-
+//
 // #ifdef BOARD_MASTER
 //      // Emit triggering event each camTrigCycle ms
 //     ulong tcur = millis();
